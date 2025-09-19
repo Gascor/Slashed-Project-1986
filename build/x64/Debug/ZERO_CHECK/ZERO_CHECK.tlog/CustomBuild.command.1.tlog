@@ -1,0 +1,10 @@
+^C:\USERS\LUCAS\DESKTOP\SLASHED PROJECT 1986\BUILD\CMAKEFILES\A91BEBEC091AD7EC4D5B9B704B6A48CA\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" "-SC:/Users/lucas/Desktop/Slashed Project 1986" "-BC:/Users/lucas/Desktop/Slashed Project 1986/build" --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file "C:/Users/lucas/Desktop/Slashed Project 1986/build/SlashedProject1986.sln"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

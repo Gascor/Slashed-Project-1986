@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/Users/lucas/Desktop/Slashed Project 1986/build/cmake_install.cmake",
+		"C:/Users/lucas/Desktop/Slashed Project 1986/build/external/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
