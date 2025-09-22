@@ -155,6 +155,8 @@ struct GameState {
     size_t player_entity_index;
     size_t remote_entity_indices[GAME_MAX_REMOTE_PLAYERS];
     size_t remote_entity_count;
+    uint32_t remote_visible_count;
+    double network_anim_time;
 
     double time_seconds;
     double session_time;
@@ -374,27 +376,32 @@ static void game_spawn_remote_players(GameState *game)
         return;
     }
 
-    const vec3 remote_colors[GAME_MAX_REMOTE_PLAYERS] = {
-        vec3_make(0.8f, 0.2f, 0.2f),
-        vec3_make(0.2f, 0.8f, 0.2f),
-        vec3_make(0.2f, 0.4f, 0.9f),
-        vec3_make(0.8f, 0.6f, 0.2f),
-    };
+    const vec3 remote_color = vec3_make(0.85f, 0.1f, 0.1f);
+    const vec3 remote_scale = vec3_make(0.4f, game->config.player_height * 2.0f, 0.4f);
+    const float base_radius = 3.6f;
 
     game->remote_entity_count = 0U;
+    game->remote_visible_count = 0U;
+    game->network_anim_time = 0.0;
+
     for (size_t i = 0; i < GAME_MAX_REMOTE_PLAYERS; ++i) {
-        vec3 position = vec3_make(-4.0f + (float)i * 2.8f, game->config.player_height, -6.0f);
+        float angle = (float)i * ((float)M_PI * 2.0f / (float)GAME_MAX_REMOTE_PLAYERS);
+        vec3 offset = vec3_make(cosf(angle) * base_radius, 0.0f, sinf(angle) * base_radius);
+        vec3 position = vec3_add(game->player.position, offset);
+        position.y = game->config.player_height;
+
         size_t index = game_world_add_entity(&game->world,
                                              ENTITY_TYPE_REMOTE_PLAYER,
                                              position,
-                                             vec3_make(1.0f, game->config.player_height * 2.0f, 1.0f),
-                                             remote_colors[i],
-                                             true);
+                                             remote_scale,
+                                             remote_color,
+                                             false);
         if (index != SIZE_MAX && game->remote_entity_count < GAME_MAX_REMOTE_PLAYERS) {
             game->remote_entity_indices[game->remote_entity_count++] = index;
         }
     }
 }
+
 
 static bool game_entity_is_solid(const GameEntity *entity)
 {
@@ -959,28 +966,59 @@ static void game_update_network(GameState *game, float dt)
     }
 
     network_client_update(game->network, dt);
+    game->network_anim_time += dt;
+
     const NetworkClientStats *stats = network_client_stats(game->network);
-    if (!stats) {
-        return;
+
+    uint32_t desired_visible = game->remote_visible_count;
+    if (stats) {
+        desired_visible = stats->remote_player_count;
+        if (desired_visible > GAME_MAX_REMOTE_PLAYERS) {
+            desired_visible = GAME_MAX_REMOTE_PLAYERS;
+        }
+
+        if (stats->time_since_last_packet > 2.5f && desired_visible > 0 && !stats->connected) {
+            desired_visible = 0;
+        }
+    } else {
+        desired_visible = 0;
     }
 
-    if (stats->connected) {
-        for (size_t i = 0; i < game->remote_entity_count; ++i) {
-            size_t index = game->remote_entity_indices[i];
-            GameEntity *entity = game_world_entity(&game->world, index);
-            if (!entity) {
-                continue;
-            }
+    if (desired_visible > game->remote_entity_count) {
+        desired_visible = (uint32_t)game->remote_entity_count;
+    }
 
-            float base_radius = 5.5f + 0.35f * (float)i;
-            float speed = 0.45f + 0.18f * (float)i;
-            float phase = (float)game->time_seconds * speed + (float)i;
-            entity->position.x = cosf(phase) * base_radius;
-            entity->position.z = -7.0f + sinf(phase) * base_radius;
-            entity->position.y = game->config.player_height;
+    game->remote_visible_count = desired_visible;
+
+    const vec3 remote_color = vec3_make(0.85f, 0.1f, 0.1f);
+    const vec3 base_pos = game->player.position;
+    const float base_radius = 3.6f;
+    const float orbit_speed = 0.6f;
+
+    for (size_t i = 0; i < game->remote_entity_count; ++i) {
+        size_t index = game->remote_entity_indices[i];
+        GameEntity *entity = game_world_entity(&game->world, index);
+        if (!entity) {
+            continue;
+        }
+
+        if (i < game->remote_visible_count) {
+            float count = (game->remote_visible_count > 0U) ? (float)game->remote_visible_count : 1.0f;
+            float angle = (float)game->network_anim_time * orbit_speed + ((float)i / count) * (float)(M_PI * 2.0f);
+            float radius = base_radius + 0.4f * (float)i;
+            float bob = 0.25f * sinf((float)game->network_anim_time * 1.4f + (float)i);
+
+            entity->visible = true;
+            entity->position.x = base_pos.x + cosf(angle) * radius;
+            entity->position.y = game->config.player_height + bob;
+            entity->position.z = base_pos.z + sinf(angle) * radius;
+            entity->color = remote_color;
+        } else {
+            entity->visible = false;
         }
     }
 }
+
 
 GameState *game_create(const GameConfig *config, Renderer *renderer, PhysicsWorld *physics_world)
 {
@@ -1025,6 +1063,7 @@ GameState *game_create(const GameConfig *config, Renderer *renderer, PhysicsWorl
 
     game_spawn_level_geometry(&game->world);
     game_spawn_remote_players(game);
+    game->network_anim_time = 0.0;
 
     const float aspect = 16.0f / 9.0f;
     game->camera = camera_create(player_start,
@@ -1398,13 +1437,17 @@ static void game_draw_pause_menu(GameState *game)
                               0.85f,
                               0.85f);
     } else if (game->server_browser.open) {
-        const float panel_width = 720.0f;
-        const float panel_height = 480.0f;
+                const float min_panel_width = 420.0f;
+        const float min_panel_height = 360.0f;
+        const float target_panel_width = width - 140.0f;
+        const float target_panel_height = height - 180.0f;
+        const float panel_width = (target_panel_width > min_panel_width) ? target_panel_width : min_panel_width;
+        const float panel_height = (target_panel_height > min_panel_height) ? target_panel_height : min_panel_height;
         const float panel_x = (width - panel_width) * 0.5f;
         const float panel_y = (height - panel_height) * 0.5f;
         renderer_draw_ui_rect(renderer, panel_x, panel_y, panel_width, panel_height, 0.04f, 0.04f, 0.06f, 0.9f);
 
-        renderer_draw_ui_text(renderer, panel_x + 28.0f, panel_y + 34.0f, "Server Browser", 0.95f, 0.95f, 0.95f, 1.0f);
+        renderer_draw_ui_text(renderer, panel_x + 32.0f, panel_y + 34.0f, "Server Browser", 0.95f, 0.95f, 0.95f, 1.0f);
 
         double elapsed = game->time_seconds - game->server_browser.last_refresh_time;
         if (elapsed < 0.0) {
@@ -1412,7 +1455,7 @@ static void game_draw_pause_menu(GameState *game)
         }
 
         char status_line[160];
-        if (game->server_browser.status[0] != '\0') {
+        if (game->server_browser.status[0] != '\\0') {
             if (game->server_browser.last_refresh_time > 0.0) {
                 snprintf(status_line,
                          sizeof(status_line),
@@ -1435,23 +1478,28 @@ static void game_draw_pause_menu(GameState *game)
         float status_g = game->server_browser.last_request_success ? 0.95f : 0.7f;
         float status_b = game->server_browser.last_request_success ? 0.88f : 0.7f;
         renderer_draw_ui_text(renderer,
-                              panel_x + 28.0f,
-                              panel_y + 72.0f,
+                              panel_x + 32.0f,
+                              panel_y + 74.0f,
                               status_line,
                               status_r,
                               status_g,
                               status_b,
                               0.95f);
 
-        const float header_y = panel_y + 116.0f;
-        const float list_x = panel_x + 32.0f;
-        const float row_height = 34.0f;
+        const float list_x = panel_x + 40.0f;
+        const float list_width = panel_width - 80.0f;
+        const float row_height = 36.0f;
+        const float header_y = panel_y + 126.0f;
+
+        const float col_server = list_width * 0.45f;
+        const float col_address = list_width * 0.30f;
+        const float col_players = list_width * 0.12f;
+        const float col_mode = list_width - (col_server + col_address + col_players);
 
         renderer_draw_ui_text(renderer, list_x, header_y, "Server", 0.85f, 0.85f, 0.95f, 0.9f);
-        renderer_draw_ui_text(renderer, list_x + 320.0f, header_y, "Address", 0.85f, 0.85f, 0.95f, 0.9f);
-        renderer_draw_ui_text(renderer, list_x + 520.0f, header_y, "Players", 0.85f, 0.85f, 0.95f, 0.9f);
-        renderer_draw_ui_text(renderer, list_x + 620.0f, header_y, "Mode", 0.85f, 0.85f, 0.95f, 0.9f);
-
+        renderer_draw_ui_text(renderer, list_x + col_server, header_y, "Address", 0.85f, 0.85f, 0.95f, 0.9f);
+        renderer_draw_ui_text(renderer, list_x + col_server + col_address, header_y, "Players", 0.85f, 0.85f, 0.95f, 0.9f);
+        renderer_draw_ui_text(renderer, list_x + col_server + col_address + col_players, header_y, "Mode", 0.85f, 0.85f, 0.95f, 0.9f);
         size_t server_count = game->server_browser.entry_count;
         int selection = game->server_browser.selection;
         if (selection < 0) {
@@ -1666,8 +1714,10 @@ static void game_draw_ui(GameState *game)
     int minutes = (int)(game->session_time / 60.0);
     int seconds = (int)fmod(game->session_time, 60.0);
     snprintf(buffer, sizeof(buffer),
-         "Objective: %s\n"
-         "Elapsed: %02d:%02d\n"
+         "Objective: %s
+"
+         "Elapsed: %02d:%02d
+"
          "Sprint: %s",
          game->objective_text,
          minutes,
@@ -1866,6 +1916,19 @@ void game_clear_quit_request(GameState *game)
         game->request_quit = false;
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

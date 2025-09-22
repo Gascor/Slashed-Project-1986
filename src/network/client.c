@@ -15,6 +15,7 @@
 
 #define NETWORK_MESSAGE_HELLO 0x01
 #define NETWORK_MESSAGE_WELCOME 0x02
+#define NETWORK_MESSAGE_PLAYER_COUNT 0x03
 
 typedef struct NetworkClient {
     NetworkClientConfig config;
@@ -196,6 +197,10 @@ static void network_client_handle_packet(NetworkClient *client, const ENetEvent 
         double now = network_get_time_seconds();
         double rtt = now - client->handshake_start;
         client->stats.simulated_ping_ms = (float)(rtt * 1000.0);
+    } else if (message_type == NETWORK_MESSAGE_PLAYER_COUNT) {
+        if (size >= 2) {
+            client->stats.remote_player_count = data[1];
+        }
     }
 
     client->stats.time_since_last_packet = 0.0f;

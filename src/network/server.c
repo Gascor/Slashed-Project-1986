@@ -28,6 +28,7 @@ typedef int master_socket_t;
 
 #define NETWORK_MESSAGE_HELLO 0x01
 #define NETWORK_MESSAGE_WELCOME 0x02
+#define NETWORK_MESSAGE_PLAYER_COUNT 0x03
 
 #define MASTER_DEFAULT_HEARTBEAT 5.0f
 
@@ -72,6 +73,25 @@ static void network_server_decrement_ref(void)
     }
 }
 
+static void network_server_master_refresh_entry(NetworkServer *server)
+{
+    if (!server) {
+        return;
+    }
+
+    NetworkServerMaster *master = &server->master;
+    master->entry.max_players = (uint8_t)(server->stats.max_clients > 255 ? 255 : server->stats.max_clients);
+    if (master->entry.max_players == 0) {
+        master->entry.max_players = 1;
+    }
+
+    uint32_t players = server->stats.connected_clients;
+    if (players > master->entry.max_players) {
+        players = master->entry.max_players;
+    }
+
+    master->entry.players = (uint8_t)players;
+}
 static void network_server_close_socket(master_socket_t socket)
 {
     if (socket == INVALID_SOCKET) {
@@ -137,12 +157,9 @@ static int network_server_master_send(NetworkServer *server, uint8_t message_typ
         return 0;
     }
 
+    network_server_master_refresh_entry(server);
+
     MasterServerEntry entry = master->entry;
-    uint32_t players = server->stats.connected_clients;
-    if (players > entry.max_players) {
-        players = entry.max_players;
-    }
-    entry.players = (uint8_t)players;
     entry.port = htons(entry.port);
 
     MasterRegisterMessage packet;
@@ -167,7 +184,6 @@ static int network_server_master_send(NetworkServer *server, uint8_t message_typ
     return sent == (ssize_t)sizeof(packet);
 #endif
 }
-
 static void network_server_master_shutdown(NetworkServer *server)
 {
     NetworkServerMaster *master = &server->master;
@@ -267,6 +283,7 @@ static void network_server_master_init(NetworkServer *server)
         master->entry.max_players = 1;
     }
 
+    network_server_master_refresh_entry(server);
     if (network_server_master_send(server, MASTER_MSG_REGISTER)) {
         master->registered = 1;
         master->heartbeat_timer = 0.0f;
@@ -401,13 +418,56 @@ static void network_server_send_welcome(ENetPeer *peer, const NetworkServerStats
 
     enet_uint8 payload[3];
     payload[0] = NETWORK_MESSAGE_WELCOME;
-    payload[1] = (enet_uint8)(stats->connected_clients & 0xFF);
+    enet_uint8 remote_count = 0;
+    if (stats->connected_clients > 0U) {
+        remote_count = (enet_uint8)((stats->connected_clients - 1U) & 0xFF);
+    }
+    payload[1] = remote_count;
     payload[2] = (enet_uint8)(stats->max_clients & 0xFF);
 
     ENetPacket *packet = enet_packet_create(payload, sizeof(payload), ENET_PACKET_FLAG_RELIABLE);
     enet_peer_send(peer, 0, packet);
 }
 
+static void network_server_broadcast_player_count(NetworkServer *server)
+{
+    if (!server || !server->host) {
+        return;
+    }
+
+    enet_uint8 remote_count = 0;
+    if (server->stats.connected_clients > 0U) {
+        remote_count = (enet_uint8)((server->stats.connected_clients - 1U) & 0xFF);
+    }
+
+    enet_uint8 payload[2];
+    payload[0] = NETWORK_MESSAGE_PLAYER_COUNT;
+    payload[1] = remote_count;
+
+    ENetPacket *packet = enet_packet_create(payload, sizeof(payload), ENET_PACKET_FLAG_RELIABLE);
+    enet_host_broadcast(server->host, 0, packet);
+}
+
+static void network_server_master_push(NetworkServer *server)
+{
+    if (!server) {
+        return;
+    }
+
+    NetworkServerMaster *master = &server->master;
+    if (!master->enabled || master->socket == INVALID_SOCKET) {
+        return;
+    }
+
+    uint8_t type = master->registered ? MASTER_MSG_HEARTBEAT : MASTER_MSG_REGISTER;
+    if (network_server_master_send(server, type)) {
+        master->heartbeat_timer = 0.0f;
+        master->retry_timer = 0.0f;
+        server->stats.master_registered = true;
+        server->stats.master_time_since_contact = 0.0f;
+        master->registered = 1;
+    }
+}
 void network_server_update(NetworkServer *server, float dt)
 {
     if (!server || !server->host) {
@@ -426,12 +486,16 @@ void network_server_update(NetworkServer *server, float dt)
             printf("[network] client connected (%u/%u)\n",
                    server->stats.connected_clients,
                    server->stats.max_clients);
+            network_server_broadcast_player_count(server);
+            network_server_master_push(server);
             break;
         case ENET_EVENT_TYPE_RECEIVE:
             if (event.packet && event.packet->dataLength > 0) {
                 enet_uint8 type = event.packet->data[0];
                 if (type == NETWORK_MESSAGE_HELLO) {
                     network_server_send_welcome(event.peer, &server->stats);
+                    network_server_broadcast_player_count(server);
+                    network_server_master_push(server);
                 }
             }
             if (event.packet) {
@@ -445,6 +509,8 @@ void network_server_update(NetworkServer *server, float dt)
             printf("[network] client disconnected (%u/%u)\n",
                    server->stats.connected_clients,
                    server->stats.max_clients);
+            network_server_broadcast_player_count(server);
+            network_server_master_push(server);
             break;
         default:
             break;
