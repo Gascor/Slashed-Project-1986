@@ -4,19 +4,46 @@
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\application.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\platform\window_win32.c">
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\camera.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\renderer\renderer.c">
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\input.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\math.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\ecs\ecs.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\game.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\client.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\master_client.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\master_server.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\network.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\server.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\physics\physics.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\renderer\renderer.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\resources\loader.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\platform\window_win32.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

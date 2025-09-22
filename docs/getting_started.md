@@ -14,11 +14,11 @@
 
 If you prefer Visual Studio, swap the generator: `cmake -S . -B build -G "Visual Studio 17 2022" -A x64` then `cmake --build build --config Debug`.
 
-Running `build\Debug\sp1986.exe` (or `build/sp1986` with Ninja) spawns a simple Win32 + OpenGL window that clears to a dark blue tone for the configured frame budget in `src/main.c`; press `Esc` to close it immediately.
+Running `build\Debug\sp1986.exe` (or `build/sp1986` with Ninja) spawns a Win32 + OpenGL window that now registers raw mouse input, clears to a color driven by a sandbox “player” controller, and prints the controller state to the console. Move with `WASD`, raise/lower with `Space`/`Ctrl`, look with the mouse, sprint with `Shift`, and press `Esc` to close immediately.
 
 ## Suggested Next Steps
-1. Expand the Win32 platform layer with input handling (keyboard/mouse), high-DPI support, and fullscreen toggles. Consider abstracting behind an interface so other backends (GLFW, SDL) can coexist.
-2. Replace the immediate-mode renderer stub with a pipeline that loads shaders, sets up vertex buffers, and draws test geometry.
+1. Extend the platform layer with richer input features (raw mouse toggle, cursor capture, high-DPI awareness beyond `SetProcessDPIAware`, fullscreen toggles) and abstract for other backends.
+2. Wire the camera view/projection matrices into a real renderer path: load GL functions, compile shaders, and draw test geometry (triangle/cube).
 3. Implement file IO inside `resources_load_file` and point `resources_init` to the assets directory.
 4. Extend the ECS to manage components (transform, camera, render data) and feed the renderer.
 5. Instantiate a `PhysicsWorld` in the game loop and advance it with a fixed timestep to drive the player controller.
@@ -28,3 +28,4 @@ Running `build\Debug\sp1986.exe` (or `build/sp1986` with Ninja) spawns a simple 
 - Vendor third-party libraries under external/ or add FetchContent entries in external/CMakeLists.txt.
 - Keep platform dependencies isolated to the platform layer; other modules should include engine headers only.
 - Track design decisions in docs/ as subsystems evolve.
+

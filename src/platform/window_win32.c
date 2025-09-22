@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
+#include <hidusage.h>
 #include <GL/gl.h>
 
 #include <stdbool.h>
@@ -23,6 +24,7 @@ typedef struct PlatformInputState {
     int mouse_dy;
     float mouse_wheel;
     bool mouse_initialized;
+    bool raw_input_enabled;
 } PlatformInputState;
 
 typedef struct PlatformWindow {
@@ -83,6 +85,16 @@ static PlatformKey platform_translate_key(WPARAM wparam)
         return PLATFORM_KEY_Q;
     case 'E':
         return PLATFORM_KEY_E;
+    case 'R':
+        return PLATFORM_KEY_R;
+    case 'F':
+        return PLATFORM_KEY_F;
+    case '1':
+        return PLATFORM_KEY_1;
+    case '2':
+        return PLATFORM_KEY_2;
+    case '3':
+        return PLATFORM_KEY_3;
     default:
         break;
     }
@@ -181,8 +193,10 @@ static LRESULT CALLBACK platform_window_proc(HWND hwnd, UINT msg, WPARAM wparam,
             const int x = GET_X_LPARAM(lparam);
             const int y = GET_Y_LPARAM(lparam);
             if (window->input.mouse_initialized) {
-                window->input.mouse_dx += x - window->input.mouse_x;
-                window->input.mouse_dy += y - window->input.mouse_y;
+                if (!window->input.raw_input_enabled) {
+                    window->input.mouse_dx += x - window->input.mouse_x;
+                    window->input.mouse_dy += y - window->input.mouse_y;
+                }
             } else {
                 window->input.mouse_initialized = true;
             }
@@ -214,6 +228,24 @@ static LRESULT CALLBACK platform_window_proc(HWND hwnd, UINT msg, WPARAM wparam,
             window->input.mouse_wheel += (float)delta / (float)WHEEL_DELTA;
         }
         return 0;
+    case WM_INPUT:
+        if (window) {
+            UINT size = 0;
+            if (GetRawInputData((HRAWINPUT)lparam, RID_INPUT, NULL, &size, sizeof(RAWINPUTHEADER)) == 0 && size > 0) {
+                RAWINPUT *raw = (RAWINPUT *)malloc(size);
+                if (raw) {
+                    if (GetRawInputData((HRAWINPUT)lparam, RID_INPUT, raw, &size, sizeof(RAWINPUTHEADER)) == size) {
+                        if (raw->header.dwType == RIM_TYPEMOUSE) {
+                            window->input.mouse_dx += raw->data.mouse.lLastX;
+                            window->input.mouse_dy += raw->data.mouse.lLastY;
+                            window->input.raw_input_enabled = true;
+                        }
+                    }
+                    free(raw);
+                }
+            }
+        }
+        return 0;
     default:
         break;
     }
@@ -230,6 +262,14 @@ bool platform_init(void)
     g_instance = GetModuleHandle(NULL);
     if (!g_instance) {
         return false;
+    }
+
+    HMODULE user32 = GetModuleHandleA("user32.dll");
+    if (user32) {
+        BOOL(WINAPI *set_process_dpi_aware)(void) = (BOOL(WINAPI *)(void))GetProcAddress(user32, "SetProcessDPIAware");
+        if (set_process_dpi_aware) {
+            set_process_dpi_aware();
+        }
     }
 
     LARGE_INTEGER freq;
@@ -365,6 +405,16 @@ PlatformWindow *platform_create_window(const PlatformWindowDesc *desc)
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
 
+    RAWINPUTDEVICE rid = {
+        .usUsagePage = HID_USAGE_PAGE_GENERIC,
+        .usUsage = HID_USAGE_GENERIC_MOUSE,
+        .dwFlags = RIDEV_INPUTSINK,
+        .hwndTarget = hwnd,
+    };
+    if (!RegisterRawInputDevices(&rid, 1, sizeof(rid))) {
+        /* If registration fails we fall back to WM_MOUSEMOVE deltas. */
+    }
+
     g_active_window = window;
 
     return window;
@@ -440,6 +490,17 @@ void platform_window_request_close(PlatformWindow *window)
         PostMessage(window->hwnd, WM_CLOSE, 0, 0);
     }
 }
+
+void platform_window_get_size(const PlatformWindow *window, uint32_t *out_width, uint32_t *out_height)
+{
+    if (out_width) {
+        *out_width = window ? window->width : 0U;
+    }
+    if (out_height) {
+        *out_height = window ? window->height : 0U;
+    }
+}
+
 
 void platform_begin_frame(PlatformWindow *window)
 {
@@ -554,3 +615,5 @@ double platform_get_time(void)
 
     return (double)counter.QuadPart / g_qpc_frequency;
 }
+
+

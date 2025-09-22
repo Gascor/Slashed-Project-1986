@@ -78,7 +78,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <ConformanceMode>true</ConformanceMode>
@@ -103,10 +103,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;SP1986_DEBUG;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -119,7 +119,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
       <ConformanceMode>true</ConformanceMode>
@@ -145,10 +145,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -161,7 +161,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
       <ConformanceMode>true</ConformanceMode>
@@ -187,10 +187,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -203,7 +203,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
       <ConformanceMode>true</ConformanceMode>
@@ -228,10 +228,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\lucas\Desktop\Slashed Project 1986\include;C:\Users\lucas\Desktop\Slashed Project 1986\external\enet_stub;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -301,11 +301,20 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\application.c" />
-    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\platform\window_win32.c" />
-    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\renderer\renderer.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\camera.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\input.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\math.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\ecs\ecs.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\game.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\client.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\master_client.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\master_server.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\network.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\server.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\physics\physics.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\renderer\renderer.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\resources\loader.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\platform\window_win32.c" />
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>
@@ -314,6 +323,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Name>ZERO_CHECK</Name>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\lucas\Desktop\Slashed Project 1986\build\external\enet_stub.vcxproj">
+      <Project>{B911A860-4DF8-30DD-B397-24EBD7B10BD1}</Project>
+      <Name>enet_stub</Name>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

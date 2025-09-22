@@ -17,9 +17,13 @@
 - Memory arenas for transient allocations (frame allocator)
 
 ### Math
-- Vec3/Vec4, Mat4, Quaternion structs + operations
-- Transform helper (position/rotation/scale) with cached matrices
-- Frustum construction for culling
+- Vec3/Vec4 helpers, Mat4 builders (identity, translation, scale, rotation, perspective, look-at)
+- Normalisation, dot/cross, length utilities feeding camera/physics
+
+### Camera
+- FPS-style yaw/pitch camera with clamped angles
+- Provides forward/right/up vectors and view/projection matrices for the renderer
+
 
 ### Renderer
 - Renderer backend using OpenGL 4.5 core profile
@@ -33,6 +37,11 @@
   - Components: Transform, Camera, MeshRenderer, Rigidbody, CharacterController, Light
   - Systems: Transform propagation, Render submission, Physics step, Script tick
 - Scene graph stored as flat arrays for cache affinity
+
+### Input
+- Platform abstraction collects per-frame keyboard/mouse state (raw input on Win32)
+- `InputState` translates to gameplay-friendly axes/actions (move/look/sprint)
+- Future: configurable bindings, gamepad support, action map serialization
 
 ### Physics
 - Broadphase: Dynamic AABB tree or uniform grid (start simple grid)
@@ -97,3 +106,4 @@ C-engine/
     shaders/
     textures/
     models/
+

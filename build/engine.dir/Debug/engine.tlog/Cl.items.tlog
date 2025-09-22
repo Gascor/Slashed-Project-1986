@@ -1,6 +1,15 @@
 C:\Users\lucas\Desktop\Slashed Project 1986\src\core\application.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\application.obj
-C:\Users\lucas\Desktop\Slashed Project 1986\src\platform\window_win32.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\window_win32.obj
-C:\Users\lucas\Desktop\Slashed Project 1986\src\renderer\renderer.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\renderer.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\core\camera.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\camera.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\core\input.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\input.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\core\math.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\math.obj
 C:\Users\lucas\Desktop\Slashed Project 1986\src\ecs\ecs.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\ecs.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\game\game.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\game.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\network\client.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\client.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\network\master_client.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\master_client.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\network\master_server.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\master_server.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\network\network.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\network.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\network\server.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\server.obj
 C:\Users\lucas\Desktop\Slashed Project 1986\src\physics\physics.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\physics.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\renderer\renderer.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\renderer.obj
 C:\Users\lucas\Desktop\Slashed Project 1986\src\resources\loader.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\loader.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\platform\window_win32.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Debug\window_win32.obj

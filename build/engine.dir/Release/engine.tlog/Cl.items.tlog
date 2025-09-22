@@ -1,0 +1,11 @@
+C:\Users\lucas\Desktop\Slashed Project 1986\src\core\application.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Release\application.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\core\camera.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Release\camera.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\core\math.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Release\math.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\core\input.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Release\input.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\platform\window_win32.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Release\window_win32.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\renderer\renderer.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Release\renderer.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\game\game.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Release\game.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\network\network.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Release\network.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\ecs\ecs.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Release\ecs.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\physics\physics.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Release\physics.obj
+C:\Users\lucas\Desktop\Slashed Project 1986\src\resources\loader.c;C:\Users\lucas\Desktop\Slashed Project 1986\build\engine.dir\Release\loader.obj

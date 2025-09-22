@@ -1,4 +1,7 @@
 C:/Users/lucas/Desktop/Slashed Project 1986/build/CMakeFiles/engine.dir
 C:/Users/lucas/Desktop/Slashed Project 1986/build/CMakeFiles/sp1986.dir
+C:/Users/lucas/Desktop/Slashed Project 1986/build/CMakeFiles/server.dir
+C:/Users/lucas/Desktop/Slashed Project 1986/build/CMakeFiles/master_server.dir
 C:/Users/lucas/Desktop/Slashed Project 1986/build/CMakeFiles/ALL_BUILD.dir
 C:/Users/lucas/Desktop/Slashed Project 1986/build/CMakeFiles/ZERO_CHECK.dir
+C:/Users/lucas/Desktop/Slashed Project 1986/build/external/CMakeFiles/enet_stub.dir

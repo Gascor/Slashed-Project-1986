@@ -178,6 +178,14 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{EC87F0BC-08F1-3079-ACA9-97A82C9327C2}</Project>
       <Name>engine</Name>
     </ProjectReference>
+    <ProjectReference Include="C:\Users\lucas\Desktop\Slashed Project 1986\build\master_server.vcxproj">
+      <Project>{D8DF73AC-FB14-336B-ABB2-104C794F83AA}</Project>
+      <Name>master_server</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\lucas\Desktop\Slashed Project 1986\build\server.vcxproj">
+      <Project>{1B302A81-C50C-3546-B4A0-BA6C0E02170C}</Project>
+      <Name>server</Name>
+    </ProjectReference>
     <ProjectReference Include="C:\Users\lucas\Desktop\Slashed Project 1986\build\sp1986.vcxproj">
       <Project>{54D901E2-A5C0-3F6D-8523-7B8CECDDA4A5}</Project>
       <Name>sp1986</Name>

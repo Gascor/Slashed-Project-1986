@@ -18,6 +18,7 @@ typedef struct PlatformInputState {
     int mouse_dx;
     int mouse_dy;
     float mouse_wheel;
+    bool raw_input_enabled;
 } PlatformInputState;
 
 struct PlatformWindow {
@@ -76,6 +77,16 @@ void platform_window_request_close(PlatformWindow *window)
 {
     if (window) {
         window->should_close = true;
+    }
+}
+
+void platform_window_get_size(const PlatformWindow *window, uint32_t *out_width, uint32_t *out_height)
+{
+    if (out_width) {
+        *out_width = window ? window->desc.width : 0U;
+    }
+    if (out_height) {
+        *out_height = window ? window->desc.height : 0U;
     }
 }
 
@@ -177,3 +188,8 @@ double platform_get_time(void)
 {
     return (double)clock() / (double)CLOCKS_PER_SEC;
 }
+
+
+
+
+

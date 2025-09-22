@@ -30,6 +30,11 @@ typedef enum PlatformKey {
     PLATFORM_KEY_D,
     PLATFORM_KEY_Q,
     PLATFORM_KEY_E,
+    PLATFORM_KEY_R,
+    PLATFORM_KEY_F,
+    PLATFORM_KEY_1,
+    PLATFORM_KEY_2,
+    PLATFORM_KEY_3,
     PLATFORM_KEY_COUNT
 } PlatformKey;
 
@@ -51,6 +56,8 @@ void platform_poll_events(PlatformWindow *window);
 bool platform_window_should_close(const PlatformWindow *window);
 void platform_swap_buffers(PlatformWindow *window);
 void platform_window_request_close(PlatformWindow *window);
+
+void platform_window_get_size(const PlatformWindow *window, uint32_t *out_width, uint32_t *out_height);
 
 bool platform_key_down(const PlatformWindow *window, PlatformKey key);
 bool platform_key_pressed(const PlatformWindow *window, PlatformKey key);
