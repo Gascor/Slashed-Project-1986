@@ -46,3 +46,4 @@ bool game_should_quit(const GameState *game);
 void game_clear_quit_request(GameState *game);
 void game_set_double_jump_enabled(GameState *game, bool enabled);
 bool game_connect_to_master_entry(GameState *game, const MasterServerEntry *entry);
+bool game_request_open_server_browser(GameState *game);

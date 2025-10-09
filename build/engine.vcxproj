@@ -301,11 +301,18 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\application.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\audio.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\camera.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\menu.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\input.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\math.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\ecs\ecs.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\game.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\hud.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\player.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\server_browser.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\weapons.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\world.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\client.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\master_client.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\master_server.c" />
@@ -314,6 +321,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\physics\physics.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\renderer\renderer.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\resources\loader.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\ui\settings_menu.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\platform\window_win32.c" />
   </ItemGroup>
   <ItemGroup />

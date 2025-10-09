@@ -4,7 +4,13 @@
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\application.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\audio.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\camera.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\menu.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\input.c">
@@ -17,6 +23,21 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\game.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\hud.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\player.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\server_browser.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\weapons.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\game\world.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\network\client.c">
@@ -41,6 +62,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\resources\loader.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\ui\settings_menu.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\platform\window_win32.c">

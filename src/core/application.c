@@ -7,12 +7,34 @@
 #include "engine/ecs.h"
 #include "engine/resources.h"
 #include "engine/math.h"
+#include "engine/camera.h"
 #include "engine/network.h"
+#include "engine/preferences.h"
 #include "engine/network_server.h"
-#include "engine/master_protocol.h"\r\n#include "engine/network_master.h"
+#include "engine/master_protocol.h"
+#include "engine/network_master.h"
+#include "engine/settings_menu.h"
+#include "engine/server_browser.h"
+#include "engine/audio.h"
 
 #define APP_MASTER_DEFAULT_HOST "127.0.0.1"
 #define APP_MASTER_DEFAULT_PORT 27050
+
+#define MENU_CAMERA_DEFAULT_ASPECT (16.0f / 9.0f)
+#define MENU_CAMERA_MAIN_POS vec3_make(0.0f, 1.7f, 6.0f)
+#define MENU_CAMERA_MAIN_YAW ((float)M_PI)
+#define MENU_CAMERA_MAIN_PITCH (-0.08f)
+#define MENU_CAMERA_BROWSER_POS vec3_make(-2.8f, 1.9f, 5.2f)
+#define MENU_CAMERA_BROWSER_YAW ((float)(M_PI * 0.82))
+#define MENU_CAMERA_BROWSER_PITCH (-0.12f)
+#define MENU_CAMERA_OPTIONS_POS vec3_make(2.6f, 1.75f, 4.8f)
+#define MENU_CAMERA_OPTIONS_YAW ((float)(M_PI * 1.12))
+#define MENU_CAMERA_OPTIONS_PITCH (-0.05f)
+#define MENU_CAMERA_ABOUT_POS vec3_make(0.6f, 2.2f, 6.4f)
+#define MENU_CAMERA_ABOUT_YAW ((float)(M_PI * 0.95))
+#define MENU_CAMERA_ABOUT_PITCH (-0.2f)
+#define MENU_CAMERA_ANIM_DURATION 0.75f
+#define MENU_MUSIC_DEFAULT_PATH "assets/audio/menu_theme.mp3"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +51,22 @@
 #    include <time.h>
 #endif
 
+static void sleep_milliseconds(unsigned int ms)
+{
+    if (ms == 0U) {
+        return;
+    }
+
+#if defined(_WIN32)
+    Sleep(ms);
+#else
+    struct timespec ts = {0};
+    ts.tv_sec = (time_t)(ms / 1000U);
+    ts.tv_nsec = (long)(ms % 1000U) * 1000000L;
+    nanosleep(&ts, NULL);
+#endif
+}
+
 typedef enum AppScreen {
     APP_SCREEN_MAIN_MENU = 0,
     APP_SCREEN_SERVER_BROWSER,
@@ -42,12 +80,25 @@ typedef struct AppState {
     AppScreen next_screen;
     bool show_fps_overlay;
     bool request_shutdown;
+    float master_volume;
+    float music_volume;
+    bool music_playing;
+    bool audio_available;
 
     MasterServerEntry pending_entry;
     bool pending_join;
 
-
     ServerBrowserState browser;
+    SettingsMenuState settings_menu;
+
+    PlatformWindow *window;
+    PlatformWindowMode window_mode;
+    uint32_t resolution_width;
+    uint32_t resolution_height;
+
+    char master_server_host[MASTER_SERVER_ADDR_MAX];
+    MasterClientConfig master_config;
+    bool server_browser_pending_refresh;
 
     Camera menu_camera;
     bool menu_camera_ready;
@@ -65,105 +116,109 @@ typedef struct AppState {
     double menu_time;
 } AppState;
 
-static void sleep_milliseconds(unsigned int ms)
+static bool point_in_rect(float px, float py, float rx, float ry, float rw, float rh)
 {
-#if defined(_WIN32)
-    Sleep(ms);
-#else
-    struct timespec ts;
-    ts.tv_sec = ms / 1000;
-    ts.tv_nsec = (long)(ms % 1000) * 1000000L;
-    nanosleep(&ts, NULL);
-#endif
-}
-static const vec3 MENU_CAMERA_MAIN_POS = {0.0f, 4.6f, 9.2f};
-static const float MENU_CAMERA_MAIN_YAW = (float)M_PI;
-static const float MENU_CAMERA_MAIN_PITCH = -0.35f;
-
-static const vec3 MENU_CAMERA_OPTIONS_POS = {2.4f, 4.1f, 8.6f};
-static const float MENU_CAMERA_OPTIONS_YAW = (float)(M_PI * 0.82f);
-static const float MENU_CAMERA_OPTIONS_PITCH = -0.30f;
-
-static const vec3 MENU_CAMERA_SERVER_POS = {-3.2f, 2.4f, 2.9f};
-static const float MENU_CAMERA_SERVER_YAW = (float)(-M_PI * 0.36f);
-static const float MENU_CAMERA_SERVER_PITCH = -0.18f;
-
-static vec3 vec3_lerp(vec3 a, vec3 b, float t)
-{
-    vec3 result;
-    result.x = a.x + (b.x - a.x) * t;
-    result.y = a.y + (b.y - a.y) * t;
-    result.z = a.z + (b.z - a.z) * t;
-    return result;
+    return px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
 }
 
-static float wrap_angle(float angle)
+static bool app_apply_graphics(AppState *app,
+                               PlatformWindow *window,
+                               Renderer *renderer,
+                               PlatformWindowMode mode,
+                               uint32_t width,
+                               uint32_t height,
+                               uint32_t *viewport_width,
+                               uint32_t *viewport_height)
 {
-    while (angle > (float)M_PI) {
-        angle -= (float)(2.0 * M_PI);
+    if (!app || !window || !renderer || !viewport_width || !viewport_height) {
+        return false;
     }
-    while (angle < (float)-M_PI) {
-        angle += (float)(2.0 * M_PI);
+
+    if (!platform_window_set_mode(window, mode, width, height)) {
+        return false;
     }
-    return angle;
+
+    uint32_t actual_width = width;
+    uint32_t actual_height = height;
+    platform_window_get_size(window, &actual_width, &actual_height);
+
+    renderer_set_viewport(renderer, actual_width, actual_height);
+
+    app->window_mode = mode;
+    app->resolution_width = actual_width;
+    app->resolution_height = actual_height;
+    *viewport_width = actual_width;
+    *viewport_height = actual_height;
+    return true;
 }
 
-static void app_set_camera_target(AppState *app, vec3 target_pos, float target_yaw, float target_pitch, float duration)
+static void app_prepare_menu_camera(AppState *app, uint32_t width, uint32_t height)
 {
     if (!app) {
         return;
     }
 
-    if (!app->menu_camera_ready || duration <= 0.0f) {
-        app->camera_target_pos = target_pos;
-        app->camera_start_pos = target_pos;
-        app->camera_target_yaw = target_yaw;
-        app->camera_start_yaw = target_yaw;
-        app->camera_target_pitch = target_pitch;
-        app->camera_start_pitch = target_pitch;
+    float aspect = MENU_CAMERA_DEFAULT_ASPECT;
+    if (width > 0U && height > 0U) {
+        aspect = (float)width / (float)height;
+    }
+
+    if (!app->menu_camera_ready) {
+        app->menu_camera = camera_create(MENU_CAMERA_MAIN_POS,
+                                         MENU_CAMERA_MAIN_YAW,
+                                         MENU_CAMERA_MAIN_PITCH,
+                                         CAMERA_DEFAULT_FOV_DEG * (float)M_PI / 180.0f,
+                                         aspect,
+                                         CAMERA_DEFAULT_NEAR,
+                                         CAMERA_DEFAULT_FAR);
+        camera_set_pitch_limits(&app->menu_camera, -0.9f, 0.45f);
+        app->menu_camera_ready = true;
+
+        app->camera_start_pos = app->menu_camera.position;
+        app->camera_target_pos = app->menu_camera.position;
+        app->camera_start_yaw = app->menu_camera.yaw;
+        app->camera_target_yaw = app->menu_camera.yaw;
+        app->camera_start_pitch = app->menu_camera.pitch;
+        app->camera_target_pitch = app->menu_camera.pitch;
         app->camera_anim_time = 0.0f;
         app->camera_anim_duration = 0.0f;
         app->camera_animating = false;
-        if (app->menu_camera_ready) {
-            app->menu_camera.position = target_pos;
-            app->menu_camera.yaw = target_yaw;
-            app->menu_camera.pitch = target_pitch;
-        }
-        return;
+    } else {
+        camera_set_aspect(&app->menu_camera, aspect);
     }
-
-    app->camera_start_pos = app->menu_camera.position;
-    app->camera_start_yaw = app->menu_camera.yaw;
-    app->camera_start_pitch = app->menu_camera.pitch;
-    app->camera_target_pos = target_pos;
-    app->camera_target_yaw = target_yaw;
-    app->camera_target_pitch = target_pitch;
-    app->camera_anim_time = 0.0f;
-    app->camera_anim_duration = duration;
-    app->camera_animating = true;
 }
 
-static void app_move_camera_to_screen(AppState *app, AppScreen screen)
+static void app_set_camera_target(AppState *app,
+                                  vec3 target_pos,
+                                  float target_yaw,
+                                  float target_pitch,
+                                  float duration)
 {
     if (!app) {
         return;
     }
 
-    const float to_server_time = 2.4f;
-    const float to_menu_time = 2.0f;
+    if (!app->menu_camera_ready) {
+        app_prepare_menu_camera(app, 1280U, 720U);
+    }
 
-    switch (screen) {
-    case APP_SCREEN_SERVER_BROWSER:
-        app_set_camera_target(app, MENU_CAMERA_SERVER_POS, MENU_CAMERA_SERVER_YAW, MENU_CAMERA_SERVER_PITCH, to_server_time);
-        break;
-    case APP_SCREEN_OPTIONS:
-    case APP_SCREEN_ABOUT:
-        app_set_camera_target(app, MENU_CAMERA_OPTIONS_POS, MENU_CAMERA_OPTIONS_YAW, MENU_CAMERA_OPTIONS_PITCH, to_menu_time);
-        break;
-    case APP_SCREEN_MAIN_MENU:
-    default:
-        app_set_camera_target(app, MENU_CAMERA_MAIN_POS, MENU_CAMERA_MAIN_YAW, MENU_CAMERA_MAIN_PITCH, to_menu_time);
-        break;
+    app->camera_start_pos = app->menu_camera.position;
+    app->camera_target_pos = target_pos;
+    app->camera_start_yaw = app->menu_camera.yaw;
+    app->camera_target_yaw = target_yaw;
+    app->camera_start_pitch = app->menu_camera.pitch;
+    app->camera_target_pitch = target_pitch;
+    app->camera_anim_time = 0.0f;
+
+    if (duration <= 0.0f) {
+        app->camera_anim_duration = 0.0f;
+        app->camera_animating = false;
+        app->menu_camera.position = target_pos;
+        app->menu_camera.yaw = target_yaw;
+        app->menu_camera.pitch = target_pitch;
+    } else {
+        app->camera_anim_duration = duration;
+        app->camera_animating = true;
     }
 }
 
@@ -173,258 +228,144 @@ static void app_update_menu_camera(AppState *app, float dt)
         return;
     }
 
-    if (app->camera_animating) {
-        app->camera_anim_time += dt;
-        float duration = app->camera_anim_duration > 0.0001f ? app->camera_anim_duration : 0.0001f;
-        float t = app->camera_anim_time / duration;
-        if (t >= 1.0f) {
-            app->camera_animating = false;
-            app->menu_camera.position = app->camera_target_pos;
-            app->menu_camera.yaw = app->camera_target_yaw;
-            app->menu_camera.pitch = app->camera_target_pitch;
-        } else {
-            if (t < 0.0f) {
-                t = 0.0f;
-            }
-            float smooth = t * t * (3.0f - 2.0f * t);
-            vec3 pos = vec3_lerp(app->camera_start_pos, app->camera_target_pos, smooth);
-            float yaw_delta = wrap_angle(app->camera_target_yaw - app->camera_start_yaw);
-            float pitch_delta = app->camera_target_pitch - app->camera_start_pitch;
-            float yaw = wrap_angle(app->camera_start_yaw + yaw_delta * smooth);
-            float pitch = app->camera_start_pitch + pitch_delta * smooth;
+    if (!app->camera_animating) {
+        return;
+    }
 
-            app->menu_camera.position = pos;
-            app->menu_camera.yaw = yaw;
-            app->menu_camera.pitch = pitch;
+    if (app->camera_anim_duration <= 0.0f) {
+        app->menu_camera.position = app->camera_target_pos;
+        app->menu_camera.yaw = app->camera_target_yaw;
+        app->menu_camera.pitch = app->camera_target_pitch;
+        app->camera_animating = false;
+        return;
+    }
+
+    app->camera_anim_time += dt;
+    float t = app->camera_anim_time / app->camera_anim_duration;
+    if (t >= 1.0f) {
+        t = 1.0f;
+        app->camera_animating = false;
+    } else if (t < 0.0f) {
+        t = 0.0f;
+    }
+
+    float smooth = t * t * (3.0f - 2.0f * t);
+    vec3 delta = vec3_sub(app->camera_target_pos, app->camera_start_pos);
+    vec3 offset = vec3_scale(delta, smooth);
+    app->menu_camera.position = vec3_add(app->camera_start_pos, offset);
+    app->menu_camera.yaw = app->camera_start_yaw + (app->camera_target_yaw - app->camera_start_yaw) * smooth;
+    app->menu_camera.pitch = app->camera_start_pitch + (app->camera_target_pitch - app->camera_start_pitch) * smooth;
+}
+
+static float app_music_target_volume(const AppState *app)
+{
+    if (!app) {
+        return 0.0f;
+    }
+
+    float volume = app->master_volume * app->music_volume;
+    if (volume < 0.0f) {
+        volume = 0.0f;
+    } else if (volume > 1.0f) {
+        volume = 1.0f;
+    }
+    return volume;
+}
+
+static void app_update_music(AppState *app, AppScreen previous_screen)
+{
+    if (!app || !app->audio_available) {
+        return;
+    }
+
+    audio_set_master_volume(app->master_volume);
+
+    if (previous_screen == APP_SCREEN_MAIN_MENU && app->screen != APP_SCREEN_MAIN_MENU) {
+        if (app->music_playing) {
+            audio_music_stop();
+            app->music_playing = false;
         }
-    } else {
-        vec3 pos = app->camera_target_pos;
-        pos.y += 0.08f * sinf((float)app->menu_time * 0.8f);
-        pos.x += 0.04f * sinf((float)app->menu_time * 0.6f);
-        app->menu_camera.position = pos;
-        app->menu_camera.yaw = wrap_angle(app->camera_target_yaw + 0.012f * sinf((float)app->menu_time * 0.5f));
-        app->menu_camera.pitch = app->camera_target_pitch + 0.008f * sinf((float)app->menu_time * 0.7f);
+        return;
+    }
+
+    if (app->screen == APP_SCREEN_MAIN_MENU) {
+        float target_volume = app_music_target_volume(app);
+        bool currently_playing = audio_music_is_playing();
+        if (!currently_playing) {
+            app->music_playing = false;
+        }
+
+        if (currently_playing) {
+            audio_music_set_volume(target_volume);
+            app->music_playing = true;
+        } else if (!app->music_playing) {
+            app->music_playing = audio_music_play(target_volume, true);
+            if (!app->music_playing) {
+                app->audio_available = false;
+            }
+        }
     }
 }
 
-static void app_prepare_menu_camera(AppState *app, uint32_t width, uint32_t height)
+static void app_move_camera_to_screen(AppState *app, AppScreen screen)
 {
     if (!app) {
         return;
     }
 
-    const float aspect = (height != 0U) ? ((float)width / (float)height) : (16.0f / 9.0f);
-
-    if (!app->menu_camera_ready) {
-        vec3 initial_pos = app->camera_target_pos;
-        float initial_yaw = app->camera_target_yaw;
-        float initial_pitch = app->camera_target_pitch;
-        app->menu_camera = camera_create(initial_pos, initial_yaw, initial_pitch, (float)M_PI / 3.0f, aspect, 0.1f, 50.0f);
-        app->menu_camera_ready = true;
-        app->menu_camera.position = initial_pos;
-        app->menu_camera.yaw = initial_yaw;
-        app->menu_camera.pitch = initial_pitch;
-    } else {
-        camera_set_aspect(&app->menu_camera, aspect);
-    }
-}
-static bool point_in_rect(float px, float py, float rx, float ry, float rw, float rh)
-{
-    return px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
-}
-
-static bool mode_filter_any_enabled(const ServerBrowserState *browser)
-{
-    if (!browser) {
-        return false;
-    }
-    for (int i = 0; i < SERVER_MODE_COUNT; ++i) {
-        if (browser->mode_filter[i]) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static const ServerBrowserState *g_sort_browser = NULL;
-static ServerSortColumn g_sort_column = SERVER_SORT_PING;
-static bool g_sort_descending = false;
-
-static int server_compare_indices(const void *lhs, const void *rhs)
-{
-    if (!g_sort_browser) {
-        return 0;
-    }
-
-    int a_index = *(const int *)lhs;
-    int b_index = *(const int *)rhs;
-
-    const ServerEntry *a = &g_sort_browser->entries[a_index];
-    const ServerEntry *b = &g_sort_browser->entries[b_index];
-
-    int result = 0;
-    switch (g_sort_column) {
-    case SERVER_SORT_NAME:
-        result = _stricmp(a->master.name, b->master.name);
+    float duration = MENU_CAMERA_ANIM_DURATION;
+    switch (screen) {
+    case APP_SCREEN_MAIN_MENU:
+        app_set_camera_target(app, MENU_CAMERA_MAIN_POS, MENU_CAMERA_MAIN_YAW, MENU_CAMERA_MAIN_PITCH, duration * 0.6f);
         break;
-    case SERVER_SORT_MODE:
-        result = (int)a->mode - (int)b->mode;
+    case APP_SCREEN_SERVER_BROWSER:
+        app_set_camera_target(app, MENU_CAMERA_BROWSER_POS, MENU_CAMERA_BROWSER_YAW, MENU_CAMERA_BROWSER_PITCH, duration);
         break;
-    case SERVER_SORT_PING:
-        result = a->ping_ms - b->ping_ms;
+    case APP_SCREEN_OPTIONS:
+        app_set_camera_target(app, MENU_CAMERA_OPTIONS_POS, MENU_CAMERA_OPTIONS_YAW, MENU_CAMERA_OPTIONS_PITCH, duration);
         break;
-    case SERVER_SORT_PLAYERS:
-        result = (a->players - b->players);
-        if (result == 0) {
-            result = a->max_players - b->max_players;
-        }
+    case APP_SCREEN_ABOUT:
+        app_set_camera_target(app, MENU_CAMERA_ABOUT_POS, MENU_CAMERA_ABOUT_YAW, MENU_CAMERA_ABOUT_PITCH, duration);
+        break;
+    case APP_SCREEN_IN_GAME:
+        app->camera_animating = false;
         break;
     default:
+        app_set_camera_target(app, MENU_CAMERA_MAIN_POS, MENU_CAMERA_MAIN_YAW, MENU_CAMERA_MAIN_PITCH, duration);
         break;
     }
-
-    if (!g_sort_descending) {
-        return result;
-    }
-    return -result;
 }
-static ServerMode server_mode_from_master(uint8_t mode)
+static void app_server_browser_request_refresh(AppState *app)
+{
+    if (app) {
+        app->server_browser_pending_refresh = true;
+    }
+}
+
+static void app_server_browser_refresh(AppState *app)
+{
+    if (!app) {
+        return;
+    }
+
+    ServerBrowserState *browser = &app->browser;
+        server_browser_refresh(browser, &app->master_config, app->menu_time);
+    app->server_browser_pending_refresh = false;
+}
+
+static const char *app_server_mode_label(uint8_t mode)
 {
     switch (mode) {
     case 0:
-        return SERVER_MODE_CTF;
+        return "Capture the Flag";
     case 1:
-        return SERVER_MODE_TDM;
+        return "Team Deathmatch";
     case 2:
-        return SERVER_MODE_SLENDER;
+        return "Slender Hunt";
     default:
-        return (ServerMode)(mode % SERVER_MODE_COUNT);
+        break;
     }
-}
-
-static bool server_browser_fetch_master(ServerBrowserState *browser)
-{
-    if (!browser) {
-        return false;
-    }
-
-    MasterServerEntry master_entries[32];
-    size_t count = 0;
-    MasterClientConfig config = {
-        .host = APP_MASTER_DEFAULT_HOST,
-        .port = APP_MASTER_DEFAULT_PORT,
-    };
-
-    bool success = network_fetch_master_list(&config, master_entries, 32, &count);
-    if (count > 32) {
-        count = 32;
-    }
-
-    browser->entry_count = count;
-    for (size_t i = 0; i < count; ++i) {
-        ServerEntry *dst = &browser->entries[i];
-        MasterServerEntry src = master_entries[i];
-        src.name[MASTER_SERVER_NAME_MAX - 1] = 0;
-        src.address[MASTER_SERVER_ADDR_MAX - 1] = 0;
-        dst->master = src;
-        dst->mode = server_mode_from_master(src.mode);
-        dst->players = (int)src.players;
-        dst->max_players = src.max_players > 0 ? (int)src.max_players : (int)src.players;
-        if (dst->max_players < dst->players) {
-            dst->players = dst->max_players;
-        }
-        dst->ping_ms = 40 + (rand() % 90);
-        dst->official = false;
-        dst->password = false;
-    }
-
-    for (size_t i = count; i < 32; ++i) {
-        memset(&browser->entries[i], 0, sizeof(ServerEntry));
-    }
-
-    browser->needs_refresh = false;
-    return success;
-}
-
-static void server_browser_refresh(ServerBrowserState *browser)
-{
-    if (!browser) {
-        return;
-    }
-
-    bool any_filter = mode_filter_any_enabled(browser);
-
-    browser->visible_count = 0;
-    for (size_t i = 0; i < browser->entry_count && browser->visible_count < 32; ++i) {
-        const ServerEntry *entry = &browser->entries[i];
-        if (!any_filter || browser->mode_filter[entry->mode]) {
-            browser->visible_indices[browser->visible_count++] = (int)i;
-        }
-    }
-
-    g_sort_browser = browser;
-    g_sort_column = browser->sort_column;
-    g_sort_descending = browser->sort_descending;
-    qsort(browser->visible_indices, browser->visible_count, sizeof(int), server_compare_indices);
-
-    if (browser->selected_entry >= 0) {
-        bool still_visible = false;
-        for (size_t i = 0; i < browser->visible_count; ++i) {
-            if (browser->visible_indices[i] == browser->selected_entry) {
-                still_visible = true;
-                break;
-            }
-        }
-        if (!still_visible) {
-            browser->selected_entry = browser->visible_count > 0 ? browser->visible_indices[0] : -1;
-        }
-    }
-    if (browser->selected_entry < 0 && browser->visible_count > 0) {
-        browser->selected_entry = browser->visible_indices[0];
-    }
-    if (browser->visible_count == 0) {
-        browser->selected_entry = -1;
-    }
-}
-
-static void server_browser_toggle_sort(ServerBrowserState *browser, ServerSortColumn column)
-{
-    if (!browser) {
-        return;
-    }
-
-    if (browser->sort_column == column) {
-        browser->sort_descending = !browser->sort_descending;
-    } else {
-        browser->sort_column = column;
-        browser->sort_descending = (column == SERVER_SORT_PING) || (column == SERVER_SORT_PLAYERS);
-    }
-    server_browser_refresh(browser);
-}
-
-static void server_browser_init(ServerBrowserState *browser)
-{
-    if (!browser) {
-        return;
-    }
-
-    memset(browser, 0, sizeof(*browser));
-    browser->master_config.host = APP_MASTER_DEFAULT_HOST;
-    browser->master_config.port = APP_MASTER_DEFAULT_PORT;
-    srand((unsigned int)time(NULL));
-
-    for (int i = 0; i < SERVER_MODE_COUNT; ++i) {
-        browser->mode_filter[i] = true;
-    }
-
-    browser->sort_column = SERVER_SORT_PING;
-    browser->sort_descending = false;
-    browser->selected_entry = -1;
-    browser->hover_entry = -1;
-    browser->needs_refresh = false;
-
-    server_browser_fetch_master(browser);
-    server_browser_refresh(browser);
+    return NULL;
 }
 
 
@@ -450,39 +391,6 @@ static bool ui_button(Renderer *renderer,
     renderer_draw_ui_rect(renderer, x, y, width, height, base, base * 0.9f, base * 0.8f, 0.9f * alpha);
     renderer_draw_ui_text(renderer, x + 24.0f, y + height * 0.5f - 8.0f, label, 0.95f, 0.95f, 0.95f, 1.0f * alpha);
     return pressed;
-}
-
-static bool ui_toggle(Renderer *renderer,
-                      const InputState *input,
-                      float x,
-                      float y,
-                      float width,
-                      float height,
-                      const char *label,
-                      bool *value,
-                      float alpha)
-{
-    if (!renderer || !label || !value) {
-        return false;
-    }
-
-    float px = input ? (float)input->mouse_x : -1000.0f;
-    float py = input ? (float)input->mouse_y : -1000.0f;
-    bool hovered = input && point_in_rect(px, py, x, y, width, height);
-    bool toggled = hovered && input && input->mouse_left_pressed;
-
-    const float base = *value ? 0.26f : 0.10f;
-    renderer_draw_ui_rect(renderer, x, y, width, height, base, base * 0.85f, base * 0.7f, 0.9f * alpha);
-
-    char buffer[96];
-    snprintf(buffer, sizeof(buffer), "%s: %s", label, *value ? "ON" : "OFF");
-    renderer_draw_ui_text(renderer, x + 18.0f, y + height * 0.5f - 8.0f, buffer, 0.95f, 0.95f, 0.95f, 1.0f * alpha);
-
-    if (toggled) {
-        *value = !*value;
-        return true;
-    }
-    return false;
 }
 
 static void app_render_main_menu(AppState *app,
@@ -545,65 +453,68 @@ static void app_render_main_menu(AppState *app,
 
 static void app_render_options(AppState *app,
                                Renderer *renderer,
-                               const InputState *input)
+                               const InputState *input,
+                               uint32_t *viewport_width,
+                               uint32_t *viewport_height)
 {
-    if (!app || !renderer) {
+    if (!app || !renderer || !viewport_width || !viewport_height) {
         return;
     }
 
     renderer_begin_ui(renderer);
 
-    const uint32_t vp_width = renderer_viewport_width(renderer);
-    const uint32_t vp_height = renderer_viewport_height(renderer);
-    const float width = (float)vp_width;
-    const float height = (float)vp_height;
+    SettingsMenuContext context = {0};
+    context.in_game = false;
+    context.show_fps_overlay = &app->show_fps_overlay;
+    context.window_mode = &app->window_mode;
+    context.resolution_width = &app->resolution_width;
+    context.resolution_height = &app->resolution_height;
+    size_t resolution_count = 0;
+    context.resolutions = preferences_resolutions(&resolution_count);
+    context.resolution_count = resolution_count;
 
-    const float panel_width = 520.0f;
-    const float panel_height = 420.0f;
-    const float panel_x = (width - panel_width) * 0.5f;
-    const float panel_y = (height - panel_height) * 0.5f;
-
-    renderer_draw_ui_rect(renderer, panel_x - 16.0f, panel_y - 16.0f, panel_width + 32.0f, panel_height + 32.0f, 0.04f, 0.04f, 0.07f, 0.9f);
-    renderer_draw_ui_text(renderer, panel_x + 32.0f, panel_y + 32.0f, "Settings", 0.95f, 0.95f, 0.98f, 1.0f);
-
-    float option_y = panel_y + 92.0f;
-    const float option_width = panel_width - 64.0f;
-    const float option_height = 50.0f;
-    const float option_x = panel_x + 32.0f;
-
-    if (ui_toggle(renderer, input, option_x, option_y, option_width, option_height, "FPS overlay", &app->show_fps_overlay, 1.0f)) {
-        /* updated */
-    }
-    option_y += option_height + 12.0f;
-
-    renderer_draw_ui_rect(renderer, option_x, option_y, option_width, option_height, 0.10f, 0.10f, 0.14f, 0.6f);
-    renderer_draw_ui_text(renderer,
-                          option_x + 18.0f,
-                          option_y + option_height * 0.5f - 8.0f,
-                          "Flight mode toggles are restricted to administrator console commands.",
-                          0.85f,
-                          0.85f,
-                          0.85f,
-                          0.8f);
-    option_y += option_height + 12.0f;
-
-    renderer_draw_ui_rect(renderer, option_x, option_y, option_width, option_height, 0.10f, 0.10f, 0.14f, 0.6f);
-    renderer_draw_ui_text(renderer,
-                          option_x + 18.0f,
-                          option_y + option_height * 0.5f - 8.0f,
-                          "Audio, control and accessibility settings will land in future updates.",
-                          0.85f,
-                          0.85f,
-                          0.85f,
-                          0.8f);
-    option_y += option_height + 24.0f;
-
-    if (ui_button(renderer, input, option_x, option_y, option_width, 48.0f, "Back", 1.0f)) {
+    SettingsMenuResult result = settings_menu_render(&app->settings_menu, &context, renderer, input);
+    if (result.back_requested) {
         app->next_screen = APP_SCREEN_MAIN_MENU;
+        settings_menu_cancel_rebind(&app->settings_menu);
+    }
+
+    if (result.binding_changed || result.binding_reset || result.reset_all_bindings) {
+        preferences_capture_bindings();
+        preferences_save();
+    }
+
+    if (result.graphics_changed && result.graphics_width > 0U && result.graphics_height > 0U) {
+        PlatformWindowMode new_mode = result.graphics_mode;
+        uint32_t new_width = result.graphics_width;
+        uint32_t new_height = result.graphics_height;
+
+        bool applied = false;
+        if (app->window) {
+            applied = app_apply_graphics(app,
+                                       app->window,
+                                       renderer,
+                                       new_mode,
+                                       new_width,
+                                       new_height,
+                                       viewport_width,
+                                       viewport_height);
+        }
+
+        if (!applied) {
+            app->window_mode = new_mode;
+            app->resolution_width = new_width;
+            app->resolution_height = new_height;
+        }
+
+        if (preferences_set_graphics(app->window_mode, app->resolution_width, app->resolution_height)) {
+            preferences_save();
+        }
     }
 
     renderer_end_ui(renderer);
 }
+
 
 static void app_render_about(AppState *app,
                              Renderer *renderer,
@@ -657,10 +568,34 @@ static void app_render_server_browser(AppState *app,
 
     ServerBrowserState *browser = &app->browser;
 
-    if (browser->needs_refresh) {
-        server_browser_fetch_master(browser);
-        server_browser_refresh(browser);
-        browser->needs_refresh = false;
+    if (!browser->open) {
+        if (server_browser_open(browser, &app->master_config, app->menu_time)) {
+            app->server_browser_pending_refresh = false;
+        }
+    } else if (app->server_browser_pending_refresh) {
+        app_server_browser_refresh(app);
+    }
+
+    if (input) {
+        if (input->mouse_wheel > 0.1f) {
+            server_browser_move_selection(browser, -1);
+        } else if (input->mouse_wheel < -0.1f) {
+            server_browser_move_selection(browser, 1);
+        }
+
+        if (input->key_pressed[PLATFORM_KEY_UP]) {
+            server_browser_move_selection(browser, -1);
+        } else if (input->key_pressed[PLATFORM_KEY_DOWN]) {
+            server_browser_move_selection(browser, 1);
+        }
+
+        if (input->key_pressed[PLATFORM_KEY_ENTER] && request_join && server_browser_has_entries(browser)) {
+            *request_join = true;
+        }
+
+        if (input->escape_pressed) {
+            app->next_screen = APP_SCREEN_MAIN_MENU;
+        }
     }
 
     renderer_begin_ui(renderer);
@@ -678,138 +613,181 @@ static void app_render_server_browser(AppState *app,
     renderer_draw_ui_rect(renderer, panel_x - 14.0f, panel_y - 14.0f, panel_width + 28.0f, panel_height + 28.0f, 0.04f, 0.04f, 0.07f, 0.92f);
     renderer_draw_ui_text(renderer, panel_x + 32.0f, panel_y + 24.0f, "Server Browser", 0.95f, 0.95f, 0.98f, 1.0f);
 
-    float filter_x = panel_x + 32.0f;
-    float filter_y = panel_y + 72.0f;
-    const float filter_width = 160.0f;
-    const float filter_height = 40.0f;
+    char info_line[160];
+    snprintf(info_line,
+             sizeof(info_line),
+             "Master: %s:%u",
+             app->master_config.host ? app->master_config.host : APP_MASTER_DEFAULT_HOST,
+             app->master_config.port ? app->master_config.port : APP_MASTER_DEFAULT_PORT);
+    renderer_draw_ui_text(renderer, panel_x + 32.0f, panel_y + 64.0f, info_line, 0.78f, 0.78f, 0.84f, 0.95f);
 
-    for (int mode = 0; mode < SERVER_MODE_COUNT; ++mode) {
-        bool changed = ui_toggle(renderer,
-                                 input,
-                                 filter_x,
-                                 filter_y,
-                                 filter_width,
-                                 filter_height,
-                                 server_mode_name((ServerMode)mode),
-                                 &browser->mode_filter[mode],
-                                 1.0f);
-        if (changed) {
-            server_browser_refresh(browser);
-        }
-        filter_x += filter_width + 12.0f;
-    }
+    const char *status = browser->status[0] ? browser->status : "Requesting server list...";
+    renderer_draw_ui_text(renderer, panel_x + 32.0f, panel_y + 92.0f, status, 0.85f, 0.85f, 0.92f, 0.95f);
 
-    if (!mode_filter_any_enabled(browser)) {
-        for (int mode = 0; mode < SERVER_MODE_COUNT; ++mode) {
-            browser->mode_filter[mode] = true;
+    if (browser->last_refresh_time > 0.0) {
+        double elapsed = app->menu_time - browser->last_refresh_time;
+        if (elapsed < 0.0) {
+            elapsed = 0.0;
         }
-        server_browser_refresh(browser);
+        snprintf(info_line, sizeof(info_line), "Updated %.1f seconds ago", elapsed);
+        renderer_draw_ui_text(renderer, panel_x + 32.0f, panel_y + 116.0f, info_line, 0.65f, 0.65f, 0.72f, 0.9f);
     }
 
     const float table_x = panel_x + 32.0f;
-    const float table_y = panel_y + 128.0f;
+    const float table_y = panel_y + 148.0f;
     const float table_width = panel_width - 64.0f;
     const float row_height = 38.0f;
 
     float column_widths[4] = {
-        table_width * 0.45f,
-        table_width * 0.20f,
-        table_width * 0.15f,
+        table_width * 0.40f,
+        table_width * 0.26f,
+        table_width * 0.14f,
         table_width * 0.20f,
     };
 
-    const char *column_titles[4] = {"Server", "Mode", "Ping", "Players"};
+    const char *column_titles[4] = {"Server", "Address", "Mode", "Players"};
 
     float header_x = table_x;
     for (int col = 0; col < 4; ++col) {
         float header_width = column_widths[col];
         renderer_draw_ui_rect(renderer, header_x, table_y, header_width, row_height, 0.10f, 0.10f, 0.16f, 0.85f);
-
-        char header_label[64];
-        if ((int)browser->sort_column == col) {
-            snprintf(header_label, sizeof(header_label), "%s %s", column_titles[col], browser->sort_descending ? "v" : "^");
-        } else {
-            snprintf(header_label, sizeof(header_label), "%s", column_titles[col]);
-        }
-        renderer_draw_ui_text(renderer, header_x + 12.0f, table_y + 10.0f, header_label, 0.92f, 0.92f, 0.92f, 1.0f);
-
-        bool header_clicked = input && input->mouse_left_pressed && point_in_rect((float)input->mouse_x, (float)input->mouse_y, header_x, table_y, header_width, row_height);
-        if (header_clicked) {
-            server_browser_toggle_sort(browser, (ServerSortColumn)col);
-        }
-
+        renderer_draw_ui_text(renderer, header_x + 12.0f, table_y + 10.0f, column_titles[col], 0.92f, 0.92f, 0.92f, 1.0f);
         header_x += header_width;
     }
 
-    const size_t max_rows = (size_t)((panel_y + panel_height - 160.0f - (table_y + row_height)) / row_height);
+    const float list_area_height = panel_y + panel_height - 200.0f - (table_y + row_height);
+    size_t max_rows = list_area_height > 0.0f ? (size_t)(list_area_height / row_height) : (size_t)0;
+    if (max_rows == 0) {
+        max_rows = 1;
+    }
+
+    size_t total_entries = browser->entry_count;
+    size_t start_index = 0;
+    if (total_entries > max_rows) {
+        int selection = browser->selection;
+        if (selection < 0) {
+            selection = 0;
+        }
+        if (selection >= (int)total_entries) {
+            selection = (int)total_entries - 1;
+        }
+        if (selection >= 0) {
+            if ((size_t)selection >= max_rows) {
+                start_index = (size_t)selection + 1 - max_rows;
+            }
+        }
+    }
+
     float row_y = table_y + row_height;
     float mouse_x = input ? (float)input->mouse_x : -1000.0f;
     float mouse_y = input ? (float)input->mouse_y : -1000.0f;
 
-    browser->hover_entry = -1;
-    size_t rows_drawn = 0;
-    for (size_t i = 0; i < browser->visible_count && rows_drawn < max_rows; ++i) {
-        int entry_index = browser->visible_indices[i];
-        const ServerEntry *entry = &browser->entries[entry_index];
-        bool selected = (entry_index == browser->selected_entry);
-        bool hovered = point_in_rect(mouse_x, mouse_y, table_x, row_y, table_width, row_height);
-        if (hovered) {
-            browser->hover_entry = entry_index;
+    bool have_entries = total_entries > 0;
+
+    if (!have_entries) {
+        renderer_draw_ui_text(renderer,
+                              table_x,
+                              row_y + 8.0f,
+                              "No servers available.",
+                              0.75f,
+                              0.75f,
+                              0.82f,
+                              0.9f);
+    } else {
+        size_t rows_drawn = 0;
+        for (size_t i = start_index; i < total_entries && rows_drawn < max_rows; ++i) {
+            const MasterServerEntry *entry = &browser->entries[i];
+            bool selected = have_entries && (browser->selection == (int)i);
+            bool hovered = point_in_rect(mouse_x, mouse_y, table_x, row_y, table_width, row_height);
+
+            const float base = selected ? 0.22f : (hovered ? 0.18f : 0.12f);
+            renderer_draw_ui_rect(renderer, table_x, row_y, table_width, row_height, base, base * 0.9f, base * 0.8f, 0.85f);
+
+            float cell_x = table_x + 12.0f;
+            renderer_draw_ui_text(renderer,
+                                  cell_x,
+                                  row_y + 9.0f,
+                                  entry->name,
+                                  0.96f,
+                                  0.96f,
+                                  0.96f,
+                                  selected ? 1.0f : 0.88f);
+            cell_x += column_widths[0];
+
+            char text[128];
+            snprintf(text, sizeof(text), "%s:%u", entry->address, entry->port);
+            renderer_draw_ui_text(renderer, cell_x + 12.0f, row_y + 9.0f, text, 0.92f, 0.92f, 0.96f, 0.9f);
+            cell_x += column_widths[1];
+
+            const char *mode_label = app_server_mode_label(entry->mode);
+            if (mode_label) {
+                renderer_draw_ui_text(renderer, cell_x + 12.0f, row_y + 9.0f, mode_label, 0.92f, 0.92f, 0.96f, 0.9f);
+            } else {
+                snprintf(text, sizeof(text), "Mode %u", (unsigned int)entry->mode);
+                renderer_draw_ui_text(renderer, cell_x + 12.0f, row_y + 9.0f, text, 0.92f, 0.92f, 0.96f, 0.9f);
+            }
+            cell_x += column_widths[2];
+
+            snprintf(text, sizeof(text), "%u / %u", (unsigned int)entry->players, (unsigned int)entry->max_players);
+            renderer_draw_ui_text(renderer, cell_x + 12.0f, row_y + 9.0f, text, 0.92f, 0.92f, 0.96f, 0.9f);
+
+            if (hovered && input && input->mouse_left_pressed) {
+                server_browser_set_selection(browser, (int)i);
+            }
+
+            row_y += row_height;
+            ++rows_drawn;
         }
-
-        const float base = selected ? 0.22f : (hovered ? 0.18f : 0.12f);
-        renderer_draw_ui_rect(renderer, table_x, row_y, table_width, row_height, base, base * 0.9f, base * 0.8f, 0.85f);
-
-        char text[128];
-        float cell_x = table_x + 12.0f;
-        snprintf(text, sizeof(text), "%s%s", entry->master.name, entry->password ? " [lock]" : "");
-        renderer_draw_ui_text(renderer, cell_x, row_y + 9.0f, text, 0.96f, 0.96f, 0.96f, selected ? 1.0f : 0.88f);
-        cell_x += column_widths[0];
-
-        renderer_draw_ui_text(renderer, cell_x + 12.0f, row_y + 9.0f, server_mode_name(entry->mode), 0.92f, 0.92f, 0.96f, 0.9f);
-        cell_x += column_widths[1];
-
-        snprintf(text, sizeof(text), "%d", entry->ping_ms);
-        renderer_draw_ui_text(renderer, cell_x + 12.0f, row_y + 9.0f, text, 0.92f, 0.92f, 0.96f, 0.9f);
-        cell_x += column_widths[2];
-
-        snprintf(text, sizeof(text), "%d / %d", entry->players, entry->max_players);
-        renderer_draw_ui_text(renderer, cell_x + 12.0f, row_y + 9.0f, text, 0.92f, 0.92f, 0.96f, 0.9f);
-
-        if (hovered && input && input->mouse_left_pressed) {
-            browser->selected_entry = entry_index;
-        }
-
-        row_y += row_height;
-        ++rows_drawn;
     }
 
     float footer_y = panel_y + panel_height - 72.0f;
     float footer_x = panel_x + 32.0f;
-    float footer_button_width = 180.0f;
-    float footer_button_height = 46.0f;
+    const float footer_button_width = 180.0f;
+    const float footer_button_height = 46.0f;
 
-    bool join_clicked = ui_button(renderer, input, footer_x, footer_y, footer_button_width, footer_button_height, "Join Selected", 1.0f);
+    bool join_clicked = ui_button(renderer,
+                                  input,
+                                  footer_x,
+                                  footer_y,
+                                  footer_button_width,
+                                  footer_button_height,
+                                  "Join Selected",
+                                  1.0f);
     footer_x += footer_button_width + 16.0f;
-    bool refresh_clicked = ui_button(renderer, input, footer_x, footer_y, footer_button_width, footer_button_height, "Refresh", 1.0f);
+
+    bool refresh_clicked = ui_button(renderer,
+                                     input,
+                                     footer_x,
+                                     footer_y,
+                                     footer_button_width,
+                                     footer_button_height,
+                                     "Refresh",
+                                     1.0f);
     footer_x += footer_button_width + 16.0f;
-    bool back_clicked = ui_button(renderer, input, footer_x, footer_y, footer_button_width, footer_button_height, "Back", 1.0f);
+
+    bool back_clicked = ui_button(renderer,
+                                  input,
+                                  footer_x,
+                                  footer_y,
+                                  footer_button_width,
+                                  footer_button_height,
+                                  "Back",
+                                  1.0f);
 
     if (refresh_clicked) {
-        server_browser_fetch_master(browser);
-        server_browser_refresh(browser);
+        app_server_browser_request_refresh(app);
+        app_server_browser_refresh(app);
     }
 
     if (back_clicked) {
-        browser->needs_refresh = true;
         app->next_screen = APP_SCREEN_MAIN_MENU;
     }
 
-    if (join_clicked && request_join && browser->selected_entry >= 0) {
-        app->pending_entry = browser->entries[browser->selected_entry].master;
-        app->pending_join = true;
+    if ((join_clicked || (input && input->key_pressed[PLATFORM_KEY_ENTER])) && request_join && server_browser_has_entries(browser)) {
         *request_join = true;
     }
+
+    renderer_end_ui(renderer);
 }
 
 static void app_render_menu_background(AppState *app, Renderer *renderer)
@@ -947,15 +925,40 @@ int engine_run(const EngineConfig *config)
     ecs_init();
     resources_init("assets");
 
+    preferences_init();
+    const EnginePreferences *prefs = preferences_get();
+
+    bool audio_initialized = audio_init();
+    bool menu_music_ready = false;
+    if (!audio_initialized) {
+        fprintf(stderr, "[audio] audio_init failed, menu music disabled\n");
+    } else {
+        if (!audio_music_set_track(MENU_MUSIC_DEFAULT_PATH)) {
+            fprintf(stderr, "[audio] failed to configure menu music track: %s\n", MENU_MUSIC_DEFAULT_PATH);
+        } else {
+            menu_music_ready = true;
+        }
+    }
+
+    uint32_t preferred_width = (prefs && prefs->resolution_width) ? prefs->resolution_width
+                                                                   : (config->width ? config->width : 1920U);
+    uint32_t preferred_height = (prefs && prefs->resolution_height) ? prefs->resolution_height
+                                                                     : (config->height ? config->height : 1080U);
+    PlatformWindowMode preferred_mode = prefs ? prefs->window_mode : PLATFORM_WINDOW_MODE_FULLSCREEN;
+
     PlatformWindowDesc desc = {
-        .width = config->width,
-        .height = config->height,
+        .width = preferred_width,
+        .height = preferred_height,
         .title = config->title,
+        .mode = preferred_mode,
     };
 
     PlatformWindow *window = platform_create_window(&desc);
     if (!window) {
         fprintf(stderr, "[engine] platform_create_window failed\n");
+        if (audio_initialized) {
+            audio_shutdown();
+        }
         resources_shutdown();
         ecs_shutdown();
         platform_shutdown();
@@ -965,22 +968,27 @@ int engine_run(const EngineConfig *config)
     Renderer *renderer = renderer_create();
     if (!renderer) {
         platform_destroy_window(window);
+        if (audio_initialized) {
+            audio_shutdown();
+        }
         resources_shutdown();
         ecs_shutdown();
         platform_shutdown();
         return -4;
     }
 
-    uint32_t viewport_width = config->width ? config->width : 1280U;
-    uint32_t viewport_height = config->height ? config->height : 720U;
+    uint32_t viewport_width = preferred_width;
+    uint32_t viewport_height = preferred_height;
     platform_window_get_size(window, &viewport_width, &viewport_height);
     if (viewport_width == 0U) {
-        viewport_width = config->width ? config->width : 1280U;
+        viewport_width = preferred_width;
     }
     if (viewport_height == 0U) {
-        viewport_height = config->height ? config->height : 720U;
+        viewport_height = preferred_height;
     }
     renderer_set_viewport(renderer, viewport_width, viewport_height);
+    app.resolution_width = viewport_width;
+    app.resolution_height = viewport_height;
 
     PhysicsWorldDesc physics_desc = {
         .gravity_y = -9.81f,
@@ -989,6 +997,9 @@ int engine_run(const EngineConfig *config)
     if (!physics_world) {
         renderer_destroy(renderer);
         platform_destroy_window(window);
+        if (audio_initialized) {
+            audio_shutdown();
+        }
         resources_shutdown();
         ecs_shutdown();
         platform_shutdown();
@@ -1016,13 +1027,38 @@ int engine_run(const EngineConfig *config)
     GameState *game = NULL;
 
     AppState app = {0};
+    settings_menu_init(&app.settings_menu);
     app.screen = APP_SCREEN_MAIN_MENU;
     app.next_screen = APP_SCREEN_MAIN_MENU;
     app.show_fps_overlay = config->show_fps;
+    app.audio_available = menu_music_ready;
+    app.master_volume = 1.0f;
+    app.music_volume = 0.7f;
+    app.music_playing = false;
+    app.window = window;
+    app.window_mode = preferred_mode;
+    app.resolution_width = preferred_width;
+    app.resolution_height = preferred_height;
+
+    snprintf(app.master_server_host, sizeof(app.master_server_host), "%s", APP_MASTER_DEFAULT_HOST);
+    app.master_config.host = app.master_server_host;
+    app.master_config.port = APP_MASTER_DEFAULT_PORT;
+
     server_browser_init(&app.browser);
-    app_set_camera_target(&app, MENU_CAMERA_MAIN_POS, MENU_CAMERA_MAIN_YAW, MENU_CAMERA_MAIN_PITCH, 0.0f);
     app_prepare_menu_camera(&app, viewport_width, viewport_height);
+    app_set_camera_target(&app, MENU_CAMERA_MAIN_POS, MENU_CAMERA_MAIN_YAW, MENU_CAMERA_MAIN_PITCH, 0.0f);
     app_update_menu_camera(&app, 0.0f);
+
+    audio_set_master_volume(app.master_volume);
+    if (app.audio_available) {
+        float target_volume = app_music_target_volume(&app);
+        if (audio_music_play(target_volume, true)) {
+            app.music_playing = true;
+        } else {
+            app.music_playing = false;
+            app.audio_available = false;
+        }
+    }
 
 
     InputState input_state;
@@ -1101,10 +1137,12 @@ int engine_run(const EngineConfig *config)
             game_update(game, dt);
 
             if (game_should_quit(game)) {
+                AppScreen previous_screen = app.screen;
                 game_clear_quit_request(game);
                 app_stop_game(&game);
                 app.screen = APP_SCREEN_MAIN_MENU;
                 app.next_screen = APP_SCREEN_MAIN_MENU;
+                app_update_music(&app, previous_screen);
             } else {
                 game_render(game);
 
@@ -1133,15 +1171,16 @@ int engine_run(const EngineConfig *config)
             bool start_local_game = false;
             bool join_from_browser = false;
 
-            switch (app.screen) {
-            case APP_SCREEN_MAIN_MENU:
-                app_render_main_menu(&app, renderer, &input_state, &start_local_game);
-                break;
+        switch (app.screen) {
+        case APP_SCREEN_MAIN_MENU:
+            app_render_main_menu(&app, renderer, &input_state, &start_local_game);
+            app_update_music(&app, app.screen);
+            break;
             case APP_SCREEN_SERVER_BROWSER:
                 app_render_server_browser(&app, renderer, &input_state, &join_from_browser);
                 break;
             case APP_SCREEN_OPTIONS:
-                app_render_options(&app, renderer, &input_state);
+                app_render_options(&app, renderer, &input_state, &viewport_width, &viewport_height);
                 break;
             case APP_SCREEN_ABOUT:
                 app_render_about(&app, renderer, &input_state);
@@ -1152,32 +1191,41 @@ int engine_run(const EngineConfig *config)
 
             if (start_local_game) {
                 if (app_start_game(&game, &game_config, renderer, physics_world, viewport_width, viewport_height)) {
+                    AppScreen previous_screen = app.screen;
                     app.screen = APP_SCREEN_IN_GAME;
                     app.next_screen = APP_SCREEN_IN_GAME;
+                    app_update_music(&app, previous_screen);
                 }
-            } else if (join_from_browser && app.browser.selected_entry >= 0) {
-                app.pending_entry = app.browser.entries[app.browser.selected_entry].master;
-                app.pending_join = true;
+            } else if (join_from_browser) {
+                const MasterServerEntry *selected_entry = server_browser_selected(&app.browser);
+                if (selected_entry) {
+                    app.pending_entry = *selected_entry;
+                    app.pending_join = true;
 
-                if (app_start_game(&game, &game_config, renderer, physics_world, viewport_width, viewport_height)) {
-                    bool connected = false;
-                    if (game) {
-                        connected = game_connect_to_master_entry(game, &app.pending_entry);
-                    }
-
-                    if (connected) {
-                        app.screen = APP_SCREEN_IN_GAME;
-                        app.next_screen = APP_SCREEN_IN_GAME;
-                    } else {
+                    if (app_start_game(&game, &game_config, renderer, physics_world, viewport_width, viewport_height)) {
+                        bool connected = false;
                         if (game) {
-                            app_stop_game(&game);
+                            connected = game_connect_to_master_entry(game, &app.pending_entry);
                         }
-                        app.screen = APP_SCREEN_SERVER_BROWSER;
-                        app.next_screen = APP_SCREEN_SERVER_BROWSER;
-                    }
-                }
 
-                app.pending_join = false;
+                        if (connected) {
+                            AppScreen previous_screen = app.screen;
+                            app.screen = APP_SCREEN_IN_GAME;
+                            app.next_screen = APP_SCREEN_IN_GAME;
+                            app_update_music(&app, previous_screen);
+                        } else {
+                            if (game) {
+                                app_stop_game(&game);
+                            }
+                            AppScreen previous_screen = app.screen;
+                            app.screen = APP_SCREEN_SERVER_BROWSER;
+                            app.next_screen = APP_SCREEN_SERVER_BROWSER;
+                            app_update_music(&app, previous_screen);
+                        }
+                    }
+
+                    app.pending_join = false;
+                }
             }
 
             if (app.show_fps_overlay) {
@@ -1196,7 +1244,21 @@ int engine_run(const EngineConfig *config)
         platform_swap_buffers(window);
 
         if (app.next_screen != app.screen) {
+            AppScreen previous_screen = app.screen;
             app.screen = app.next_screen;
+
+            app_update_music(&app, previous_screen);
+
+            if (previous_screen == APP_SCREEN_SERVER_BROWSER && app.screen != APP_SCREEN_SERVER_BROWSER) {
+                server_browser_close(&app.browser);
+                app.server_browser_pending_refresh = false;
+            }
+
+            if (app.screen == APP_SCREEN_SERVER_BROWSER && previous_screen != APP_SCREEN_SERVER_BROWSER) {
+                server_browser_open(&app.browser, &app.master_config, app.menu_time);
+                app.server_browser_pending_refresh = false;
+            }
+
             if (app.screen != APP_SCREEN_IN_GAME) {
                 app_move_camera_to_screen(&app, app.screen);
             }
@@ -1208,10 +1270,17 @@ int engine_run(const EngineConfig *config)
         }
     }
 
+    preferences_set_graphics(app.window_mode, app.resolution_width, app.resolution_height);
+    preferences_capture_bindings();
+    preferences_save();
+
     app_stop_game(&game);
     physics_world_destroy(physics_world);
     renderer_destroy(renderer);
     platform_destroy_window(window);
+    if (audio_initialized) {
+        audio_shutdown();
+    }
     resources_shutdown();
     ecs_shutdown();
     platform_shutdown();

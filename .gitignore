@@ -1,0 +1,33 @@
+# Build artifacts
+/build/
+/bin/
+/out/
+/dist/
+/CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.o
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.so
+*.dylib
+
+# Generated assets
+*.log
+*.tmp
+*.cache
+
+# Large media files
+*.mp3
+*.mp4
+*.wav
+*.flac
+*.avi
+*.mov
+*.mkv
+*.iso

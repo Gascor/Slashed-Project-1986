@@ -34,6 +34,11 @@ typedef struct PlatformWindow {
     uint32_t width;
     uint32_t height;
     bool should_close;
+    PlatformWindowMode mode;
+    DWORD windowed_style;
+    DWORD windowed_exstyle;
+    RECT windowed_rect;
+    bool fullscreen_active;
     PlatformInputState input;
 } PlatformWindow;
 
@@ -44,12 +49,25 @@ static PlatformWindow *g_active_window = NULL;
 
 static PlatformKey platform_translate_key(WPARAM wparam)
 {
+    if (wparam >= 'A' && wparam <= 'Z') {
+        return (PlatformKey)(PLATFORM_KEY_A + (wparam - 'A'));
+    }
+
+    if (wparam >= '0' && wparam <= '9') {
+        return (PlatformKey)(PLATFORM_KEY_0 + (wparam - '0'));
+    }
+
+    if (wparam >= VK_F1 && wparam <= VK_F12) {
+        return (PlatformKey)(PLATFORM_KEY_F1 + (wparam - VK_F1));
+    }
+
     switch (wparam) {
     case VK_ESCAPE:
         return PLATFORM_KEY_ESCAPE;
     case VK_SPACE:
         return PLATFORM_KEY_SPACE;
     case VK_RETURN:
+    case VK_SEPARATOR: /* numeric keypad enter */
         return PLATFORM_KEY_ENTER;
     case VK_TAB:
         return PLATFORM_KEY_TAB;
@@ -73,28 +91,42 @@ static PlatformKey platform_translate_key(WPARAM wparam)
         return PLATFORM_KEY_LEFT;
     case VK_RIGHT:
         return PLATFORM_KEY_RIGHT;
-    case 'W':
-        return PLATFORM_KEY_W;
-    case 'A':
-        return PLATFORM_KEY_A;
-    case 'S':
-        return PLATFORM_KEY_S;
-    case 'D':
-        return PLATFORM_KEY_D;
-    case 'Q':
-        return PLATFORM_KEY_Q;
-    case 'E':
-        return PLATFORM_KEY_E;
-    case 'R':
-        return PLATFORM_KEY_R;
-    case 'F':
-        return PLATFORM_KEY_F;
-    case '1':
-        return PLATFORM_KEY_1;
-    case '2':
-        return PLATFORM_KEY_2;
-    case '3':
-        return PLATFORM_KEY_3;
+    case VK_OEM_3:
+        return PLATFORM_KEY_GRAVE;
+    case VK_OEM_MINUS:
+        return PLATFORM_KEY_MINUS;
+    case VK_OEM_PLUS:
+        return PLATFORM_KEY_EQUALS;
+    case VK_OEM_4:
+        return PLATFORM_KEY_LEFT_BRACKET;
+    case VK_OEM_6:
+        return PLATFORM_KEY_RIGHT_BRACKET;
+    case VK_OEM_5:
+        return PLATFORM_KEY_BACKSLASH;
+    case VK_OEM_1:
+        return PLATFORM_KEY_SEMICOLON;
+    case VK_OEM_7:
+        return PLATFORM_KEY_APOSTROPHE;
+    case VK_OEM_COMMA:
+        return PLATFORM_KEY_COMMA;
+    case VK_OEM_PERIOD:
+        return PLATFORM_KEY_PERIOD;
+    case VK_OEM_2:
+        return PLATFORM_KEY_SLASH;
+    case VK_BACK:
+        return PLATFORM_KEY_BACKSPACE;
+    case VK_DELETE:
+        return PLATFORM_KEY_DELETE;
+    case VK_HOME:
+        return PLATFORM_KEY_HOME;
+    case VK_END:
+        return PLATFORM_KEY_END;
+    case VK_PRIOR:
+        return PLATFORM_KEY_PAGE_UP;
+    case VK_NEXT:
+        return PLATFORM_KEY_PAGE_DOWN;
+    case VK_INSERT:
+        return PLATFORM_KEY_INSERT;
     default:
         break;
     }
@@ -149,6 +181,178 @@ static void platform_handle_mouse_button(PlatformWindow *window, PlatformMouseBu
         }
         window->input.mouse_down[button] = false;
     }
+}
+
+static void platform_window_cache_windowed_state(PlatformWindow *window)
+{
+    if (!window || !window->hwnd) {
+        return;
+    }
+
+    window->windowed_style = (DWORD)GetWindowLongPtr(window->hwnd, GWL_STYLE);
+    window->windowed_exstyle = (DWORD)GetWindowLongPtr(window->hwnd, GWL_EXSTYLE);
+    GetWindowRect(window->hwnd, &window->windowed_rect);
+}
+
+static void platform_window_apply_style(HWND hwnd, DWORD style, DWORD exstyle)
+{
+    SetWindowLongPtr(hwnd, GWL_STYLE, (LONG_PTR)style);
+    SetWindowLongPtr(hwnd, GWL_EXSTYLE, (LONG_PTR)exstyle);
+}
+
+static void platform_window_resize_rect(HWND hwnd, DWORD style, DWORD exstyle, uint32_t width, uint32_t height)
+{
+    RECT rect = {0, 0, (LONG)width, (LONG)height};
+    AdjustWindowRectEx(&rect, style, FALSE, exstyle);
+    UINT flags = SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_FRAMECHANGED;
+    SetWindowPos(hwnd,
+                 NULL,
+                 0,
+                 0,
+                 rect.right - rect.left,
+                 rect.bottom - rect.top,
+                 flags | SWP_NOMOVE);
+}
+
+static void platform_window_position(HWND hwnd, int x, int y)
+{
+    SetWindowPos(hwnd,
+                 NULL,
+                 x,
+                 y,
+                 0,
+                 0,
+                 SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOSIZE);
+}
+
+static bool platform_window_apply_windowed(PlatformWindow *window, uint32_t width, uint32_t height)
+{
+    if (!window || !window->hwnd) {
+        return false;
+    }
+
+    ChangeDisplaySettings(NULL, 0);
+
+    DWORD style = WS_OVERLAPPEDWINDOW;
+    DWORD exstyle = WS_EX_APPWINDOW;
+    platform_window_apply_style(window->hwnd, style, exstyle);
+
+    RECT rect = {0, 0, (LONG)width, (LONG)height};
+    AdjustWindowRectEx(&rect, style, FALSE, exstyle);
+    int target_width = rect.right - rect.left;
+    int target_height = rect.bottom - rect.top;
+
+    int x = window->windowed_rect.left;
+    int y = window->windowed_rect.top;
+
+    if (window->windowed_rect.right <= window->windowed_rect.left ||
+        window->windowed_rect.bottom <= window->windowed_rect.top) {
+        RECT work_area;
+        if (SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0)) {
+            x = work_area.left + ((work_area.right - work_area.left) - target_width) / 2;
+            y = work_area.top + ((work_area.bottom - work_area.top) - target_height) / 2;
+        } else {
+            x = 64;
+            y = 64;
+        }
+    }
+
+    UINT flags = SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_FRAMECHANGED;
+    if (!SetWindowPos(window->hwnd,
+                      NULL,
+                      x,
+                      y,
+                      target_width,
+                      target_height,
+                      flags)) {
+        return false;
+    }
+
+    ShowWindow(window->hwnd, SW_SHOW);
+    window->fullscreen_active = false;
+    window->windowed_style = style;
+    window->windowed_exstyle = exstyle;
+    window->windowed_rect.left = x;
+    window->windowed_rect.top = y;
+    window->windowed_rect.right = x + target_width;
+    window->windowed_rect.bottom = y + target_height;
+    return true;
+}
+
+static bool platform_window_apply_borderless(PlatformWindow *window, uint32_t width, uint32_t height)
+{
+    if (!window || !window->hwnd) {
+        return false;
+    }
+
+    ChangeDisplaySettings(NULL, 0);
+
+    DWORD style = WS_POPUP;
+    DWORD exstyle = WS_EX_APPWINDOW;
+    platform_window_apply_style(window->hwnd, style, exstyle);
+
+    RECT work_area;
+    int x = 0;
+    int y = 0;
+    if (SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0)) {
+        x = work_area.left + ((work_area.right - work_area.left) - (int)width) / 2;
+        y = work_area.top + ((work_area.bottom - work_area.top) - (int)height) / 2;
+    }
+
+    UINT flags = SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_FRAMECHANGED;
+    if (!SetWindowPos(window->hwnd,
+                      HWND_TOP,
+                      x,
+                      y,
+                      (int)width,
+                      (int)height,
+                      flags)) {
+        return false;
+    }
+
+    ShowWindow(window->hwnd, SW_SHOW);
+    window->fullscreen_active = false;
+    return true;
+}
+
+static bool platform_window_apply_fullscreen(PlatformWindow *window, uint32_t width, uint32_t height)
+{
+    if (!window || !window->hwnd) {
+        return false;
+    }
+
+    DEVMODE dm;
+    memset(&dm, 0, sizeof(dm));
+    dm.dmSize = sizeof(dm);
+    dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL;
+    dm.dmPelsWidth = width;
+    dm.dmPelsHeight = height;
+    dm.dmBitsPerPel = 32;
+
+    LONG change = ChangeDisplaySettings(&dm, CDS_FULLSCREEN);
+    if (change != DISP_CHANGE_SUCCESSFUL) {
+        return false;
+    }
+
+    DWORD style = WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+    DWORD exstyle = WS_EX_APPWINDOW;
+    platform_window_apply_style(window->hwnd, style, exstyle);
+
+    UINT flags = SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_FRAMECHANGED;
+    if (!SetWindowPos(window->hwnd,
+                      HWND_TOP,
+                      0,
+                      0,
+                      (int)width,
+                      (int)height,
+                      flags)) {
+        ChangeDisplaySettings(NULL, 0);
+        return false;
+    }
+
+    ShowWindow(window->hwnd, SW_SHOW);
+    window->fullscreen_active = true;
+    return true;
 }
 
 static LRESULT CALLBACK platform_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -360,12 +564,17 @@ PlatformWindow *platform_create_window(const PlatformWindowDesc *desc)
         return NULL;
     }
 
-    window->width = desc->width;
-    window->height = desc->height;
+    uint32_t requested_width = desc->width ? desc->width : 1280U;
+    uint32_t requested_height = desc->height ? desc->height : 720U;
+
+    window->width = requested_width;
+    window->height = requested_height;
+    window->mode = PLATFORM_WINDOW_MODE_WINDOWED;
+    window->fullscreen_active = false;
     memset(&window->input, 0, sizeof(window->input));
 
     DWORD style = WS_OVERLAPPEDWINDOW;
-    RECT rect = {0, 0, (LONG)desc->width, (LONG)desc->height};
+    RECT rect = {0, 0, (LONG)requested_width, (LONG)requested_height};
     AdjustWindowRect(&rect, style, FALSE);
 
     HWND hwnd = CreateWindowEx(
@@ -402,7 +611,18 @@ PlatformWindow *platform_create_window(const PlatformWindowDesc *desc)
         return NULL;
     }
 
-    ShowWindow(hwnd, SW_SHOWDEFAULT);
+    platform_window_cache_windowed_state(window);
+
+    PlatformWindowMode requested_mode = desc->mode;
+    if (requested_mode >= PLATFORM_WINDOW_MODE_COUNT) {
+        requested_mode = PLATFORM_WINDOW_MODE_WINDOWED;
+    }
+
+    if (!platform_window_set_mode(window, requested_mode, requested_width, requested_height)) {
+        platform_window_set_mode(window, PLATFORM_WINDOW_MODE_WINDOWED, requested_width, requested_height);
+    }
+
+    ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
 
     RAWINPUTDEVICE rid = {
@@ -424,6 +644,11 @@ void platform_destroy_window(PlatformWindow *window)
 {
     if (!window) {
         return;
+    }
+
+    if (window->fullscreen_active) {
+        ChangeDisplaySettings(NULL, 0);
+        window->fullscreen_active = false;
     }
 
     if (window->glrc) {
@@ -499,6 +724,77 @@ void platform_window_get_size(const PlatformWindow *window, uint32_t *out_width,
     if (out_height) {
         *out_height = window ? window->height : 0U;
     }
+}
+
+PlatformWindowMode platform_window_mode(const PlatformWindow *window)
+{
+    if (!window) {
+        return PLATFORM_WINDOW_MODE_WINDOWED;
+    }
+    return window->mode;
+}
+
+bool platform_window_set_mode(PlatformWindow *window,
+                              PlatformWindowMode mode,
+                              uint32_t width,
+                              uint32_t height)
+{
+    if (!window || !window->hwnd) {
+        return false;
+    }
+    if (mode >= PLATFORM_WINDOW_MODE_COUNT) {
+        return false;
+    }
+    if (width == 0 || height == 0) {
+        return false;
+    }
+
+    if (window->mode == mode && window->width == width && window->height == height) {
+        return true;
+    }
+
+    if (window->mode == PLATFORM_WINDOW_MODE_WINDOWED) {
+        platform_window_cache_windowed_state(window);
+    }
+
+    if (window->fullscreen_active && mode != PLATFORM_WINDOW_MODE_FULLSCREEN) {
+        ChangeDisplaySettings(NULL, 0);
+        window->fullscreen_active = false;
+    }
+
+    bool success = false;
+    switch (mode) {
+    case PLATFORM_WINDOW_MODE_WINDOWED:
+        success = platform_window_apply_windowed(window, width, height);
+        break;
+    case PLATFORM_WINDOW_MODE_BORDERLESS:
+        success = platform_window_apply_borderless(window, width, height);
+        break;
+    case PLATFORM_WINDOW_MODE_FULLSCREEN:
+        success = platform_window_apply_fullscreen(window, width, height);
+        break;
+    default:
+        break;
+    }
+
+    if (success) {
+        window->mode = mode;
+        window->width = width;
+        window->height = height;
+    } else if (mode != PLATFORM_WINDOW_MODE_FULLSCREEN && window->fullscreen_active) {
+        ChangeDisplaySettings(NULL, 0);
+        window->fullscreen_active = false;
+    }
+
+    return success;
+}
+
+bool platform_window_resize(PlatformWindow *window, uint32_t width, uint32_t height)
+{
+    if (!window) {
+        return false;
+    }
+    return platform_window_set_mode(window, window->mode, width, height);
 }
 
 
@@ -615,5 +911,3 @@ double platform_get_time(void)
 
     return (double)counter.QuadPart / g_qpc_frequency;
 }
-
-

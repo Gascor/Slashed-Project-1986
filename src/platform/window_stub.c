@@ -48,6 +48,15 @@ PlatformWindow *platform_create_window(const PlatformWindowDesc *desc)
     }
 
     window->desc = *desc;
+    if (window->desc.width == 0U) {
+        window->desc.width = 1280U;
+    }
+    if (window->desc.height == 0U) {
+        window->desc.height = 720U;
+    }
+    if (window->desc.mode >= PLATFORM_WINDOW_MODE_COUNT) {
+        window->desc.mode = PLATFORM_WINDOW_MODE_WINDOWED;
+    }
     window->should_close = false;
     memset(&window->input, 0, sizeof(window->input));
     return window;
@@ -88,6 +97,35 @@ void platform_window_get_size(const PlatformWindow *window, uint32_t *out_width,
     if (out_height) {
         *out_height = window ? window->desc.height : 0U;
     }
+}
+
+PlatformWindowMode platform_window_mode(const PlatformWindow *window)
+{
+    return window ? window->desc.mode : PLATFORM_WINDOW_MODE_WINDOWED;
+}
+
+bool platform_window_set_mode(PlatformWindow *window,
+                              PlatformWindowMode mode,
+                              uint32_t width,
+                              uint32_t height)
+{
+    if (!window || mode >= PLATFORM_WINDOW_MODE_COUNT || width == 0U || height == 0U) {
+        return false;
+    }
+    window->desc.mode = mode;
+    window->desc.width = width;
+    window->desc.height = height;
+    return true;
+}
+
+bool platform_window_resize(PlatformWindow *window, uint32_t width, uint32_t height)
+{
+    if (!window || width == 0U || height == 0U) {
+        return false;
+    }
+    window->desc.width = width;
+    window->desc.height = height;
+    return true;
 }
 
 void platform_begin_frame(PlatformWindow *window)

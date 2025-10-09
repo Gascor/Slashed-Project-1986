@@ -20,11 +20,19 @@ endif()
 
 set(ENGINE_SOURCES
     "${ENGINE_SOURCE_DIR}/core/application.c"
+    "${ENGINE_SOURCE_DIR}/core/audio.c"
     "${ENGINE_SOURCE_DIR}/core/camera.c"
+    "${ENGINE_SOURCE_DIR}/core/menu.c"
+    "${ENGINE_SOURCE_DIR}/core/preferences.c"
     "${ENGINE_SOURCE_DIR}/core/input.c"
     "${ENGINE_SOURCE_DIR}/core/math.c"
     "${ENGINE_SOURCE_DIR}/ecs/ecs.c"
     "${ENGINE_SOURCE_DIR}/game/game.c"
+    "${ENGINE_SOURCE_DIR}/game/hud.c"
+    "${ENGINE_SOURCE_DIR}/game/player.c"
+    "${ENGINE_SOURCE_DIR}/game/server_browser.c"
+    "${ENGINE_SOURCE_DIR}/game/weapons.c"
+    "${ENGINE_SOURCE_DIR}/game/world.c"
     "${ENGINE_SOURCE_DIR}/network/client.c"
     "${ENGINE_SOURCE_DIR}/network/master_client.c"
     "${ENGINE_SOURCE_DIR}/network/master_server.c"
@@ -33,6 +41,7 @@ set(ENGINE_SOURCES
     "${ENGINE_SOURCE_DIR}/physics/physics.c"
     "${ENGINE_SOURCE_DIR}/renderer/renderer.c"
     "${ENGINE_SOURCE_DIR}/resources/loader.c"
+    "${ENGINE_SOURCE_DIR}/ui/settings_menu.c"
     "${PLATFORM_SOURCE}"
 )
 
@@ -57,8 +66,8 @@ target_include_directories(sp1986 PRIVATE "${ENGINE_INCLUDE_DIR}")
 target_link_libraries(sp1986 PRIVATE engine)
 
 if (WIN32)
-    target_link_libraries(engine PRIVATE enet::enet ws2_32)
-    target_link_libraries(sp1986 PRIVATE opengl32 user32 gdi32)
+    target_link_libraries(engine PRIVATE enet::enet ws2_32 winmm)
+    target_link_libraries(sp1986 PRIVATE opengl32 user32 gdi32 winmm)
 else()
     target_link_libraries(engine PRIVATE enet::enet m)
 endif()
@@ -114,4 +123,3 @@ if (SP1986_BUILD_MASTER)
         target_compile_options(master_server PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()
-
