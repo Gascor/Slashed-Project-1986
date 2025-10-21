@@ -1114,6 +1114,16 @@ static void game_draw_pause_menu(GameState *game)
         context.in_game = true;
         context.view_bobbing = &game->config.enable_view_bobbing;
         context.double_jump = &game->config.enable_double_jump;
+        EnginePreferences *prefs = preferences_data();
+        context.master_volume = prefs ? &prefs->volume_master : NULL;
+        context.music_volume = prefs ? &prefs->volume_music : NULL;
+        context.effects_volume = prefs ? &prefs->volume_effects : NULL;
+        context.voice_volume = prefs ? &prefs->volume_voice : NULL;
+        context.microphone_volume = prefs ? &prefs->volume_microphone : NULL;
+        context.audio_output_device = prefs ? &prefs->audio_output_device : NULL;
+        context.audio_input_device = prefs ? &prefs->audio_input_device : NULL;
+        context.voice_activation_mode = prefs ? &prefs->voice_activation_mode : NULL;
+        context.voice_activation_threshold_db = prefs ? &prefs->voice_activation_threshold_db : NULL;
 
         SettingsMenuResult menu_result = settings_menu_render(&game->settings_menu,
                                                               &context,
@@ -1146,6 +1156,46 @@ static void game_draw_pause_menu(GameState *game)
                 snprintf(buffer, sizeof(buffer), "%s reset to default", action_name);
                 game_notify(game, buffer);
             }
+        }
+
+        bool audio_prefs_changed = false;
+        if (menu_result.master_volume_changed && prefs) {
+            audio_set_master_volume(prefs->volume_master);
+            audio_music_set_volume(prefs->volume_master * prefs->volume_music);
+            audio_prefs_changed = true;
+        }
+        if (menu_result.music_volume_changed && prefs) {
+            audio_music_set_volume(prefs->volume_master * prefs->volume_music);
+            audio_prefs_changed = true;
+        }
+        if (menu_result.effects_volume_changed && prefs) {
+            audio_set_effects_volume(prefs->volume_effects);
+            audio_prefs_changed = true;
+        }
+        if (menu_result.voice_volume_changed && prefs) {
+            audio_set_voice_volume(prefs->volume_voice);
+            audio_prefs_changed = true;
+        }
+        if (menu_result.microphone_volume_changed && prefs) {
+            audio_set_microphone_volume(prefs->volume_microphone);
+            audio_prefs_changed = true;
+        }
+        if (menu_result.output_device_changed && prefs) {
+            audio_select_output_device(prefs->audio_output_device);
+            audio_prefs_changed = true;
+        }
+        if (menu_result.input_device_changed && prefs) {
+            audio_select_input_device(prefs->audio_input_device);
+            audio_prefs_changed = true;
+        }
+        if (menu_result.voice_mode_changed && prefs) {
+            audio_prefs_changed = true;
+        }
+        if (menu_result.voice_threshold_changed && prefs) {
+            audio_prefs_changed = true;
+        }
+        if (audio_prefs_changed) {
+            preferences_save();
         }
 
         if (menu_result.reset_all_bindings) {

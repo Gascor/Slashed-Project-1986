@@ -5,6 +5,9 @@
 
 #include "engine/input.h"
 #include "engine/preferences.h"
+#include "engine/audio.h"
+
+#define SETTINGS_MENU_MAX_AUDIO_DEVICES 16
 
 typedef struct Renderer Renderer;
 typedef struct InputState InputState;
@@ -12,6 +15,7 @@ typedef struct InputState InputState;
 typedef enum SettingsMenuCategory {
     SETTINGS_MENU_CATEGORY_GRAPHICS = 0,
     SETTINGS_MENU_CATEGORY_CONTROLS,
+    SETTINGS_MENU_CATEGORY_AUDIO,
     SETTINGS_MENU_CATEGORY_ACCESSIBILITY,
     SETTINGS_MENU_CATEGORY_COUNT
 } SettingsMenuCategory;
@@ -32,6 +36,26 @@ typedef struct SettingsMenuState {
     PlatformWindowMode graphics_mode;
     size_t graphics_resolution_index;
     bool graphics_initialized;
+    bool graphics_mode_dropdown_open;
+    bool graphics_resolution_dropdown_open;
+    size_t graphics_resolution_scroll_offset;
+    bool audio_initialized;
+    size_t audio_output_index;
+    size_t audio_input_index;
+    bool audio_output_dropdown_open;
+    bool audio_input_dropdown_open;
+    size_t audio_output_scroll_offset;
+    size_t audio_input_scroll_offset;
+    AudioDeviceInfo audio_output_devices[SETTINGS_MENU_MAX_AUDIO_DEVICES];
+    size_t audio_output_device_count;
+    AudioDeviceInfo audio_input_devices[SETTINGS_MENU_MAX_AUDIO_DEVICES];
+    size_t audio_input_device_count;
+    bool interaction_locked;
+    float interaction_lock_x;
+    float interaction_lock_y;
+    float interaction_lock_w;
+    float interaction_lock_h;
+    bool interaction_consumed;
 } SettingsMenuState;
 
 typedef struct SettingsMenuContext {
@@ -44,6 +68,15 @@ typedef struct SettingsMenuContext {
     uint32_t *resolution_height;
     const PreferencesResolution *resolutions;
     size_t resolution_count;
+    float *master_volume;
+    float *music_volume;
+    float *effects_volume;
+    float *voice_volume;
+    float *microphone_volume;
+    uint32_t *audio_output_device;
+    uint32_t *audio_input_device;
+    PreferencesVoiceActivationMode *voice_activation_mode;
+    float *voice_activation_threshold_db;
 } SettingsMenuContext;
 
 typedef struct SettingsMenuResult {
@@ -61,6 +94,24 @@ typedef struct SettingsMenuResult {
     PlatformWindowMode graphics_mode;
     uint32_t graphics_width;
     uint32_t graphics_height;
+    bool master_volume_changed;
+    bool music_volume_changed;
+    bool effects_volume_changed;
+    bool voice_volume_changed;
+    bool microphone_volume_changed;
+    bool output_device_changed;
+    bool input_device_changed;
+    bool voice_mode_changed;
+    bool voice_threshold_changed;
+    float master_volume;
+    float music_volume;
+    float effects_volume;
+    float voice_volume;
+    float microphone_volume;
+    uint32_t output_device;
+    uint32_t input_device;
+    PreferencesVoiceActivationMode voice_mode;
+    float voice_activation_threshold_db;
 } SettingsMenuResult;
 
 void settings_menu_init(SettingsMenuState *state);

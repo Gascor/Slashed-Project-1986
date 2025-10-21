@@ -17,6 +17,7 @@ typedef enum InputAction {
     INPUT_ACTION_INTERACT,
     INPUT_ACTION_MENU,
     INPUT_ACTION_DROP_WEAPON,
+    INPUT_ACTION_PUSH_TO_TALK,
     INPUT_ACTION_COUNT
 } InputAction;
 
@@ -36,6 +37,8 @@ typedef struct InputState {
     bool interact_pressed;
     bool drop_pressed;
     bool drop_down;
+    bool voice_talk_pressed;
+    bool voice_talk_down;
     int mouse_x;
     int mouse_y;
     bool mouse_left_down;

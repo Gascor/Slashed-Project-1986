@@ -304,6 +304,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\audio.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\camera.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\menu.c" />
+    <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\preferences.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\input.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\core\math.c" />
     <ClCompile Include="C:\Users\lucas\Desktop\Slashed Project 1986\src\ecs\ecs.c" />

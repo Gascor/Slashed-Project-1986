@@ -1,0 +1,194 @@
+﻿*** Begin Patch
+*** Update File: src/ui/settings_menu.c
+@@
+ static bool settings_slider(SettingsMenuState *state,
+                             Renderer *renderer,
+                             const InputState *input,
+                             float x,
+                             float y,
+                             float width,
+                             float height,
+                             const char *label,
+                             float min_value,
+                             float max_value,
+                             float step,
+                             float display_scale,
+                             float *value,
+                             const char *format)
+@@
+ }
+
++static void render_audio_device_dropdown(Renderer *renderer,
++                                         SettingsMenuState *state,
++                                         const SettingsMenuContext *context,
++                                         const InputState *input,
++                                         float header_x,
++                                         float header_y,
++                                         float width,
++                                         float dropdown_height,
++                                         float dropdown_item_height,
++                                         bool is_output,
++                                         SettingsMenuResult *result)
++{
++    if (!renderer || !state) {
++        return;
++    }
++
++    AudioDeviceInfo *devices = is_output ? state->audio_output_devices : state->audio_input_devices;
++    size_t device_count = is_output ? state->audio_output_device_count : state->audio_input_device_count;
++    if (device_count == 0U) {
++        return;
++    }
++
++    size_t visible_capacity = device_count < 8U ? device_count : 8U;
++    float max_dropdown_h = (float)renderer_viewport_height(renderer) * 0.5f;
++    if (max_dropdown_h < dropdown_item_height) {
++        max_dropdown_h = dropdown_item_height;
++    }
++    size_t max_rows = (size_t)(max_dropdown_h / dropdown_item_height);
++    if (max_rows == 0U) {
++        max_rows = 1U;
++    }
++    if (visible_capacity > max_rows) {
++        visible_capacity = max_rows;
++    }
++
++    size_t *scroll_offset = is_output ? &state->audio_output_scroll_offset : &state->audio_input_scroll_offset;
++    size_t max_offset = (device_count > visible_capacity) ? (device_count - visible_capacity) : 0U;
++    if (*scroll_offset > max_offset) {
++        *scroll_offset = max_offset;
++    }
++
++    float list_x = header_x;
++    float list_y = header_y + dropdown_height;
++    float list_w = width;
++    float list_h = dropdown_item_height * (float)visible_capacity;
++    float scrollbar_width = 12.0f;
++    bool scrollbar_needed = device_count > visible_capacity;
++    float options_w = scrollbar_needed ? (list_w - scrollbar_width - 4.0f) : list_w;
++
++    settings_interaction_capture(state, header_x, header_y, width, dropdown_height + list_h);
++
++    renderer_draw_ui_rect(renderer, list_x, list_y, list_w, list_h, 0.10f, 0.10f, 0.14f, 0.94f);
++
++    float mx = input ? (float)input->mouse_x : -1000.0f;
++    float my = input ? (float)input->mouse_y : -1000.0f;
++
++    if (input && fabsf(input->mouse_wheel) > 0.01f) {
++        bool over_list = point_in_rect(mx, my, list_x, list_y, list_w, list_h);
++        if (over_list) {
++            if (input->mouse_wheel > 0.1f && *scroll_offset > 0U) {
++                --(*scroll_offset);
++            } else if (input->mouse_wheel < -0.1f && *scroll_offset < max_offset) {
++                ++(*scroll_offset);
++            }
++        }
++    }
++
++    if (scrollbar_needed) {
++        float track_x = list_x + list_w - scrollbar_width - 2.0f;
++        float track_y = list_y + 2.0f;
++        float track_h = list_h - 4.0f;
++        renderer_draw_ui_rect(renderer, track_x, track_y, scrollbar_width, track_h, 0.08f, 0.08f, 0.12f, 0.85f);
++
++        if (input && input->mouse_left_down && point_in_rect(mx, my, track_x, track_y, scrollbar_width, track_h)) {
++            float rel = (my - track_y) / track_h;
++            if (rel < 0.0f) {
++                rel = 0.0f;
++            } else if (rel > 1.0f) {
++                rel = 1.0f;
++            }
++            size_t new_offset = (size_t)(rel * (float)max_offset + 0.5f);
++            if (new_offset > max_offset) {
++                new_offset = max_offset;
++            }
++            *scroll_offset = new_offset;
++        }
++
++        float knob_h = ((float)visible_capacity / (float)device_count) * track_h;
++        if (knob_h < 14.0f) {
++            knob_h = 14.0f;
++        }
++        if (knob_h > track_h) {
++            knob_h = track_h;
++        }
++        float knob_y = track_y;
++        if (max_offset > 0U) {
++            knob_y = track_y + ((float)(*scroll_offset) / (float)max_offset) * (track_h - knob_h);
++        }
++        renderer_draw_ui_rect(renderer, track_x + 2.0f, knob_y, scrollbar_width - 4.0f, knob_h, 0.28f, 0.28f, 0.34f, 0.92f);
++    }
++
++    size_t start = *scroll_offset;
++    for (size_t i = 0; i < visible_capacity; ++i) {
++        size_t idx = start + i;
++        if (idx >= device_count) {
++            break;
++        }
++
++        float item_y = list_y + dropdown_item_height * (float)i;
++        bool hovered = point_in_rect(mx, my, list_x, item_y, options_w, dropdown_item_height);
++        bool selected = (is_output ? state->audio_output_index : state->audio_input_index) == idx;
++        float base = selected ? 0.32f : 0.20f;
++        if (hovered) {
++            base += 0.08f;
++        }
++        renderer_draw_ui_rect(renderer,
++                              list_x + 2.0f,
++                              item_y + 2.0f,
++                              options_w - 4.0f,
++                              dropdown_item_height - 4.0f,
++                              base,
++                              base * 0.85f,
++                              base * 0.7f,
++                              0.95f);
++        renderer_draw_ui_text(renderer,
++                              list_x + 18.0f,
++                              item_y + dropdown_item_height * 0.5f - 8.0f,
++                              devices[idx].name,
++                              0.95f,
++                              0.95f,
++                              0.98f,
++                              0.96f);
++
++        if (hovered && input && input->mouse_left_pressed) {
++            if (is_output) {
++                state->audio_output_index = idx;
++                state->audio_output_dropdown_open = false;
++                if (context && context->audio_output_device) {
++                    *context->audio_output_device = devices[idx].id;
++                }
++                if (result) {
++                    result->output_device_changed = true;
++                    result->output_device = devices[idx].id;
++                }
++            } else {
++                state->audio_input_index = idx;
++                state->audio_input_dropdown_open = false;
++                if (context && context->audio_input_device) {
++                    *context->audio_input_device = devices[idx].id;
++                }
++                if (result) {
++                    result->input_device_changed = true;
++                    result->input_device = devices[idx].id;
++                }
++            }
++            settings_interaction_consume(state);
++            break;
++        }
++    }
++
++    if (input && input->mouse_left_pressed) {
++        bool inside_header = point_in_rect(mx, my, header_x, header_y, width, dropdown_height);
++        bool inside_list = point_in_rect(mx, my, list_x, list_y, list_w, list_h);
++        if (!inside_header && !inside_list) {
++            if (is_output) {
++                state->audio_output_dropdown_open = false;
++            } else {
++                state->audio_input_dropdown_open = false;
++            }
++            settings_interaction_consume(state);
++        }
++    }
++}
+*** End Patch

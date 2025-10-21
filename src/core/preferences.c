@@ -89,6 +89,58 @@ static PlatformWindowMode preferences_mode_from_token(const char *token)
     return PLATFORM_WINDOW_MODE_WINDOWED;
 }
 
+static const char *preferences_voice_mode_token(PreferencesVoiceActivationMode mode)
+{
+    switch (mode) {
+    case PREFERENCES_VOICE_PUSH_TO_TALK:
+        return "push_to_talk";
+    case PREFERENCES_VOICE_VOICE_DETECTION:
+        return "voice_detection";
+    default:
+        break;
+    }
+    return "push_to_talk";
+}
+
+static PreferencesVoiceActivationMode preferences_voice_mode_from_token(const char *token)
+{
+    if (!token || !token[0]) {
+        return PREFERENCES_VOICE_PUSH_TO_TALK;
+    }
+    if (preferences_stricmp(token, "voice_detection") == 0 ||
+        preferences_stricmp(token, "voice_activity") == 0 ||
+        preferences_stricmp(token, "voice_activation") == 0) {
+        return PREFERENCES_VOICE_VOICE_DETECTION;
+    }
+    return PREFERENCES_VOICE_PUSH_TO_TALK;
+}
+
+static float preferences_clamp_volume(float value)
+{
+    if (value < 0.0f) {
+        return 0.0f;
+    }
+    if (value > 1.0f) {
+        return 1.0f;
+    }
+    return value;
+}
+
+static uint32_t preferences_parse_device_id(const char *value, uint32_t fallback)
+{
+    if (!value || !value[0] || preferences_stricmp(value, "default") == 0 ||
+        preferences_stricmp(value, "system") == 0) {
+        return UINT32_MAX;
+    }
+
+    char *end = NULL;
+    unsigned long parsed = strtoul(value, &end, 10);
+    if (end == value || parsed > UINT32_MAX) {
+        return fallback;
+    }
+    return (uint32_t)parsed;
+}
+
 static void preferences_defaults(EnginePreferences *prefs)
 {
     if (!prefs) {
@@ -97,6 +149,15 @@ static void preferences_defaults(EnginePreferences *prefs)
     prefs->window_mode = PLATFORM_WINDOW_MODE_FULLSCREEN;
     prefs->resolution_width = 1920;
     prefs->resolution_height = 1080;
+    prefs->volume_master = 1.0f;
+    prefs->volume_music = 0.7f;
+    prefs->volume_effects = 1.0f;
+    prefs->volume_voice = 1.0f;
+    prefs->volume_microphone = 1.0f;
+    prefs->audio_output_device = UINT32_MAX;
+    prefs->audio_input_device = UINT32_MAX;
+    prefs->voice_activation_mode = PREFERENCES_VOICE_PUSH_TO_TALK;
+    prefs->voice_activation_threshold_db = -45.0f;
     input_bindings_reset_defaults();
     input_bindings_export(prefs->bindings);
 }
@@ -118,6 +179,15 @@ static void preferences_load_file(EnginePreferences *prefs)
     PlatformWindowMode mode = prefs->window_mode;
     uint32_t width = prefs->resolution_width;
     uint32_t height = prefs->resolution_height;
+    float volume_master = prefs->volume_master;
+    float volume_music = prefs->volume_music;
+    float volume_effects = prefs->volume_effects;
+    float volume_voice = prefs->volume_voice;
+    float volume_microphone = prefs->volume_microphone;
+    uint32_t output_device = prefs->audio_output_device;
+    uint32_t input_device = prefs->audio_input_device;
+    PreferencesVoiceActivationMode voice_mode = prefs->voice_activation_mode;
+    float voice_threshold_db = prefs->voice_activation_threshold_db;
 
     char section[32] = {0};
     char line[256];
@@ -190,6 +260,55 @@ static void preferences_load_file(EnginePreferences *prefs)
                 PlatformKey mapped = input_key_from_token(value);
                 loaded_bindings[action] = mapped;
             }
+        } else if (preferences_stricmp(section, "audio") == 0) {
+            if (preferences_stricmp(key, "master") == 0) {
+                char *endptr = NULL;
+                float parsed = strtof(value, &endptr);
+                if (endptr != value) {
+                    volume_master = preferences_clamp_volume(parsed);
+                }
+            } else if (preferences_stricmp(key, "music") == 0) {
+                char *endptr = NULL;
+                float parsed = strtof(value, &endptr);
+                if (endptr != value) {
+                    volume_music = preferences_clamp_volume(parsed);
+                }
+            } else if (preferences_stricmp(key, "effects") == 0 ||
+                       preferences_stricmp(key, "sfx") == 0) {
+                char *endptr = NULL;
+                float parsed = strtof(value, &endptr);
+                if (endptr != value) {
+                    volume_effects = preferences_clamp_volume(parsed);
+                }
+            } else if (preferences_stricmp(key, "voice") == 0 ||
+                       preferences_stricmp(key, "voice_playback") == 0) {
+                char *endptr = NULL;
+                float parsed = strtof(value, &endptr);
+                if (endptr != value) {
+                    volume_voice = preferences_clamp_volume(parsed);
+                }
+            } else if (preferences_stricmp(key, "microphone") == 0 ||
+                       preferences_stricmp(key, "mic") == 0) {
+                char *endptr = NULL;
+                float parsed = strtof(value, &endptr);
+                if (endptr != value) {
+                    volume_microphone = preferences_clamp_volume(parsed);
+                }
+            } else if (preferences_stricmp(key, "output_device") == 0) {
+                output_device = preferences_parse_device_id(value, output_device);
+            } else if (preferences_stricmp(key, "input_device") == 0) {
+                input_device = preferences_parse_device_id(value, input_device);
+            } else if (preferences_stricmp(key, "voice_mode") == 0 ||
+                       preferences_stricmp(key, "voice_activation_mode") == 0) {
+                voice_mode = preferences_voice_mode_from_token(value);
+            } else if (preferences_stricmp(key, "voice_threshold_db") == 0 ||
+                       preferences_stricmp(key, "voice_threshold") == 0) {
+                char *endptr = NULL;
+                float parsed = strtof(value, &endptr);
+                if (endptr != value) {
+                    voice_threshold_db = parsed;
+                }
+            }
         }
     }
 
@@ -198,6 +317,21 @@ static void preferences_load_file(EnginePreferences *prefs)
     prefs->window_mode = mode;
     prefs->resolution_width = width;
     prefs->resolution_height = height;
+    prefs->volume_master = preferences_clamp_volume(volume_master);
+    prefs->volume_music = preferences_clamp_volume(volume_music);
+    prefs->volume_effects = preferences_clamp_volume(volume_effects);
+    prefs->volume_voice = preferences_clamp_volume(volume_voice);
+    prefs->volume_microphone = preferences_clamp_volume(volume_microphone);
+    prefs->audio_output_device = output_device;
+    prefs->audio_input_device = input_device;
+    if (voice_threshold_db > 0.0f) {
+        voice_threshold_db = 0.0f;
+    }
+    if (voice_threshold_db < -120.0f) {
+        voice_threshold_db = -120.0f;
+    }
+    prefs->voice_activation_threshold_db = voice_threshold_db;
+    prefs->voice_activation_mode = voice_mode;
     input_bindings_import(loaded_bindings);
     input_bindings_export(prefs->bindings);
 }
@@ -260,6 +394,25 @@ bool preferences_save(void)
     fprintf(fp, "mode=%s\n", preferences_mode_token(g_preferences.window_mode));
     fprintf(fp, "width=%u\n", g_preferences.resolution_width);
     fprintf(fp, "height=%u\n\n", g_preferences.resolution_height);
+
+    fprintf(fp, "[audio]\n");
+    fprintf(fp, "master=%.3f\n", preferences_clamp_volume(g_preferences.volume_master));
+    fprintf(fp, "music=%.3f\n", preferences_clamp_volume(g_preferences.volume_music));
+    fprintf(fp, "effects=%.3f\n", preferences_clamp_volume(g_preferences.volume_effects));
+    fprintf(fp, "voice=%.3f\n", preferences_clamp_volume(g_preferences.volume_voice));
+    fprintf(fp, "microphone=%.3f\n", preferences_clamp_volume(g_preferences.volume_microphone));
+    if (g_preferences.audio_output_device == UINT32_MAX) {
+        fprintf(fp, "output_device=default\n");
+    } else {
+        fprintf(fp, "output_device=%u\n", g_preferences.audio_output_device);
+    }
+    if (g_preferences.audio_input_device == UINT32_MAX) {
+        fprintf(fp, "input_device=default\n");
+    } else {
+        fprintf(fp, "input_device=%u\n", g_preferences.audio_input_device);
+    }
+    fprintf(fp, "voice_mode=%s\n", preferences_voice_mode_token(g_preferences.voice_activation_mode));
+    fprintf(fp, "voice_threshold_db=%.2f\n\n", g_preferences.voice_activation_threshold_db);
 
     fprintf(fp, "[controls]\n");
     size_t action_count = input_action_count();

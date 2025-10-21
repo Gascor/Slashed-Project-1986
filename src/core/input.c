@@ -33,6 +33,7 @@ static const InputActionInfo g_action_info[INPUT_ACTION_COUNT] = {
     {INPUT_ACTION_INTERACT,      "Interact",            "interact",      PLATFORM_KEY_F},
     {INPUT_ACTION_MENU,          "Pause / Menu",        "menu",          PLATFORM_KEY_ESCAPE},
     {INPUT_ACTION_DROP_WEAPON,   "Drop Weapon",         "drop_weapon",   PLATFORM_KEY_C},
+    {INPUT_ACTION_PUSH_TO_TALK,  "Push To Talk",        "push_to_talk",  PLATFORM_KEY_V},
 };
 
 static PlatformKey g_action_bindings[INPUT_ACTION_COUNT];
@@ -483,5 +484,6 @@ void input_update(InputState *state, const PlatformWindow *window, float dt)
     state->interact_pressed = binding_pressed(state, INPUT_ACTION_INTERACT);
     state->drop_pressed = binding_pressed(state, INPUT_ACTION_DROP_WEAPON);
     state->drop_down = binding_down(state, INPUT_ACTION_DROP_WEAPON);
+    state->voice_talk_pressed = binding_pressed(state, INPUT_ACTION_PUSH_TO_TALK);
+    state->voice_talk_down = binding_down(state, INPUT_ACTION_PUSH_TO_TALK);
 }
-

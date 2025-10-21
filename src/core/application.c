@@ -82,8 +82,15 @@ typedef struct AppState {
     bool request_shutdown;
     float master_volume;
     float music_volume;
+    float effects_volume;
+    float voice_volume;
+    float microphone_volume;
     bool music_playing;
     bool audio_available;
+    uint32_t audio_output_device;
+    uint32_t audio_input_device;
+    PreferencesVoiceActivationMode voice_activation_mode;
+    float voice_activation_threshold_db;
 
     MasterServerEntry pending_entry;
     bool pending_join;
@@ -472,6 +479,16 @@ static void app_render_options(AppState *app,
     size_t resolution_count = 0;
     context.resolutions = preferences_resolutions(&resolution_count);
     context.resolution_count = resolution_count;
+    EnginePreferences *prefs_data = preferences_data();
+    context.master_volume = prefs_data ? &prefs_data->volume_master : NULL;
+    context.music_volume = prefs_data ? &prefs_data->volume_music : NULL;
+    context.effects_volume = prefs_data ? &prefs_data->volume_effects : NULL;
+    context.voice_volume = prefs_data ? &prefs_data->volume_voice : NULL;
+    context.microphone_volume = prefs_data ? &prefs_data->volume_microphone : NULL;
+    context.audio_output_device = prefs_data ? &prefs_data->audio_output_device : NULL;
+    context.audio_input_device = prefs_data ? &prefs_data->audio_input_device : NULL;
+    context.voice_activation_mode = prefs_data ? &prefs_data->voice_activation_mode : NULL;
+    context.voice_activation_threshold_db = prefs_data ? &prefs_data->voice_activation_threshold_db : NULL;
 
     SettingsMenuResult result = settings_menu_render(&app->settings_menu, &context, renderer, input);
     if (result.back_requested) {
@@ -510,6 +527,55 @@ static void app_render_options(AppState *app,
         if (preferences_set_graphics(app->window_mode, app->resolution_width, app->resolution_height)) {
             preferences_save();
         }
+    }
+
+    bool audio_prefs_changed = false;
+    if (result.master_volume_changed && prefs_data) {
+        app->master_volume = prefs_data->volume_master;
+        audio_set_master_volume(app->master_volume);
+        audio_music_set_volume(app_music_target_volume(app));
+        audio_prefs_changed = true;
+    }
+    if (result.music_volume_changed && prefs_data) {
+        app->music_volume = prefs_data->volume_music;
+        audio_music_set_volume(app_music_target_volume(app));
+        audio_prefs_changed = true;
+    }
+    if (result.effects_volume_changed && prefs_data) {
+        app->effects_volume = prefs_data->volume_effects;
+        audio_set_effects_volume(app->effects_volume);
+        audio_prefs_changed = true;
+    }
+    if (result.voice_volume_changed && prefs_data) {
+        app->voice_volume = prefs_data->volume_voice;
+        audio_set_voice_volume(app->voice_volume);
+        audio_prefs_changed = true;
+    }
+    if (result.microphone_volume_changed && prefs_data) {
+        app->microphone_volume = prefs_data->volume_microphone;
+        audio_set_microphone_volume(app->microphone_volume);
+        audio_prefs_changed = true;
+    }
+    if (result.output_device_changed && prefs_data) {
+        app->audio_output_device = prefs_data->audio_output_device;
+        audio_select_output_device(app->audio_output_device);
+        audio_prefs_changed = true;
+    }
+    if (result.input_device_changed && prefs_data) {
+        app->audio_input_device = prefs_data->audio_input_device;
+        audio_select_input_device(app->audio_input_device);
+        audio_prefs_changed = true;
+    }
+    if (result.voice_mode_changed && prefs_data) {
+        app->voice_activation_mode = prefs_data->voice_activation_mode;
+        audio_prefs_changed = true;
+    }
+    if (result.voice_threshold_changed && prefs_data) {
+        app->voice_activation_threshold_db = prefs_data->voice_activation_threshold_db;
+        audio_prefs_changed = true;
+    }
+    if (audio_prefs_changed) {
+        preferences_save();
     }
 
     renderer_end_ui(renderer);
@@ -977,6 +1043,17 @@ int engine_run(const EngineConfig *config)
         return -4;
     }
 
+    AppState app = (AppState){0};
+    app.master_volume = prefs ? prefs->volume_master : 1.0f;
+    app.music_volume = prefs ? prefs->volume_music : 0.7f;
+    app.effects_volume = prefs ? prefs->volume_effects : 1.0f;
+    app.voice_volume = prefs ? prefs->volume_voice : 1.0f;
+    app.microphone_volume = prefs ? prefs->volume_microphone : 1.0f;
+    app.audio_output_device = prefs ? prefs->audio_output_device : UINT32_MAX;
+    app.audio_input_device = prefs ? prefs->audio_input_device : UINT32_MAX;
+    app.voice_activation_mode = prefs ? prefs->voice_activation_mode : PREFERENCES_VOICE_PUSH_TO_TALK;
+    app.voice_activation_threshold_db = prefs ? prefs->voice_activation_threshold_db : -45.0f;
+
     uint32_t viewport_width = preferred_width;
     uint32_t viewport_height = preferred_height;
     platform_window_get_size(window, &viewport_width, &viewport_height);
@@ -1026,14 +1103,11 @@ int engine_run(const EngineConfig *config)
 
     GameState *game = NULL;
 
-    AppState app = {0};
     settings_menu_init(&app.settings_menu);
     app.screen = APP_SCREEN_MAIN_MENU;
     app.next_screen = APP_SCREEN_MAIN_MENU;
     app.show_fps_overlay = config->show_fps;
     app.audio_available = menu_music_ready;
-    app.master_volume = 1.0f;
-    app.music_volume = 0.7f;
     app.music_playing = false;
     app.window = window;
     app.window_mode = preferred_mode;
@@ -1050,6 +1124,11 @@ int engine_run(const EngineConfig *config)
     app_update_menu_camera(&app, 0.0f);
 
     audio_set_master_volume(app.master_volume);
+    audio_set_effects_volume(app.effects_volume);
+    audio_set_voice_volume(app.voice_volume);
+    audio_set_microphone_volume(app.microphone_volume);
+    audio_select_output_device(app.audio_output_device);
+    audio_select_input_device(app.audio_input_device);
     if (app.audio_available) {
         float target_volume = app_music_target_volume(&app);
         if (audio_music_play(target_volume, true)) {
@@ -1248,6 +1327,28 @@ int engine_run(const EngineConfig *config)
             app.screen = app.next_screen;
 
             app_update_music(&app, previous_screen);
+
+            if (previous_screen == APP_SCREEN_IN_GAME && app.screen != APP_SCREEN_IN_GAME) {
+                EnginePreferences *prefs_sync = preferences_data();
+                if (prefs_sync) {
+                    app.master_volume = prefs_sync->volume_master;
+                    app.music_volume = prefs_sync->volume_music;
+                    app.effects_volume = prefs_sync->volume_effects;
+                    app.voice_volume = prefs_sync->volume_voice;
+                    app.microphone_volume = prefs_sync->volume_microphone;
+                    app.audio_output_device = prefs_sync->audio_output_device;
+                    app.audio_input_device = prefs_sync->audio_input_device;
+                    app.voice_activation_mode = prefs_sync->voice_activation_mode;
+                    app.voice_activation_threshold_db = prefs_sync->voice_activation_threshold_db;
+                    audio_set_master_volume(app.master_volume);
+                    audio_set_effects_volume(app.effects_volume);
+                    audio_set_voice_volume(app.voice_volume);
+                    audio_set_microphone_volume(app.microphone_volume);
+                    audio_select_output_device(app.audio_output_device);
+                    audio_select_input_device(app.audio_input_device);
+                    audio_music_set_volume(app_music_target_volume(&app));
+                }
+            }
 
             if (previous_screen == APP_SCREEN_SERVER_BROWSER && app.screen != APP_SCREEN_SERVER_BROWSER) {
                 server_browser_close(&app.browser);

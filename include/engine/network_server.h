@@ -5,6 +5,11 @@
 
 typedef struct NetworkServer NetworkServer;
 
+typedef enum NetworkVoiceChatMode {
+    NETWORK_VOICE_CHAT_PROXIMITY = 0,
+    NETWORK_VOICE_CHAT_GLOBAL = 1,
+} NetworkVoiceChatMode;
+
 typedef struct NetworkServerConfig {
     uint16_t port;
     uint32_t max_clients;
@@ -15,6 +20,8 @@ typedef struct NetworkServerConfig {
     float master_heartbeat_interval;
     uint8_t advertised_mode;
     bool advertise;
+    NetworkVoiceChatMode voice_mode;
+    float voice_range;
 } NetworkServerConfig;
 
 typedef struct NetworkServerStats {

@@ -489,13 +489,25 @@ static void network_server_master_init(NetworkServer *server)
 
     memset(&master->entry, 0, sizeof(master->entry));
     const char *name = server->config.name ? server->config.name : "Slashed Project 1986 Server";
-    strncpy(master->entry.name, name, MASTER_SERVER_NAME_MAX - 1);
+    if (name) {
+        size_t copy_len = strlen(name);
+        if (copy_len >= MASTER_SERVER_NAME_MAX) {
+            copy_len = MASTER_SERVER_NAME_MAX - 1U;
+        }
+        memcpy(master->entry.name, name, copy_len);
+        master->entry.name[copy_len] = '\0';
+    }
 
     const char *address = server->config.public_address;
     if (!address || address[0] == '\0') {
         address = "127.0.0.1";
     }
-    strncpy(master->entry.address, address, MASTER_SERVER_ADDR_MAX - 1);
+    size_t addr_len = strlen(address);
+    if (addr_len >= MASTER_SERVER_ADDR_MAX) {
+        addr_len = MASTER_SERVER_ADDR_MAX - 1U;
+    }
+    memcpy(master->entry.address, address, addr_len);
+    master->entry.address[addr_len] = '\0';
     master->entry.port = server->config.port;
     master->entry.mode = server->config.advertised_mode;
     master->entry.players = 0;
@@ -799,26 +811,32 @@ void network_server_update(NetworkServer *server, float dt)
                                 emitter_gain = 1.0f;
                             }
 
+                            NetworkVoiceChatMode voice_mode = server->config.voice_mode;
+                            float voice_range = server->config.voice_range > 0.0f ? server->config.voice_range : NETWORK_VOICE_RANGE;
+
                             for (uint32_t i = 0; i < server->client_capacity; ++i) {
                                 NetworkServerClient *target = &server->clients[i];
                                 if (!target->connected || !target->has_state || target->peer == client_slot->peer) {
                                     continue;
                                 }
 
-                                float dx = target->position[0] - client_slot->position[0];
-                                float dy = target->position[1] - client_slot->position[1];
-                                float dz = target->position[2] - client_slot->position[2];
-                                float distance = sqrtf(dx * dx + dy * dy + dz * dz);
-                                if (distance > NETWORK_VOICE_RANGE) {
-                                    continue;
+                                float volume_scale = emitter_gain;
+                                if (voice_mode != NETWORK_VOICE_CHAT_GLOBAL) {
+                                    float dx = target->position[0] - client_slot->position[0];
+                                    float dy = target->position[1] - client_slot->position[1];
+                                    float dz = target->position[2] - client_slot->position[2];
+                                    float distance = sqrtf(dx * dx + dy * dy + dz * dz);
+                                    if (distance > voice_range) {
+                                        continue;
+                                    }
+
+                                    float attenuation = 1.0f - (distance / voice_range);
+                                    if (attenuation <= 0.0f) {
+                                        continue;
+                                    }
+                                    volume_scale *= attenuation;
                                 }
 
-                                float attenuation = 1.0f - (distance / NETWORK_VOICE_RANGE);
-                                if (attenuation <= 0.0f) {
-                                    continue;
-                                }
-
-                                float volume_scale = emitter_gain * attenuation;
                                 if (volume_scale <= 0.0f) {
                                     continue;
                                 }

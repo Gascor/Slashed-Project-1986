@@ -48,12 +48,17 @@ typedef struct AudioStream {
 typedef struct AudioState {
     float master_volume;
     float music_volume;
+    float effects_volume;
+    float voice_volume;
+    float microphone_volume;
     char music_track[AUDIO_MAX_PATH];
     int music_configured;
     int music_playing;
     int music_loop;
     int initialized;
     uint8_t next_effect_id;
+    uint32_t output_device_id;
+    uint32_t input_device_id;
 #if defined(_WIN32)
     AudioStream streams[AUDIO_MAX_STREAMS];
     CRITICAL_SECTION stream_lock;
@@ -239,8 +244,9 @@ static MMRESULT audio_stream_open(AudioStream *stream, const WAVEFORMATEX *fmt, 
     }
 
     stream->closing = 0;
+    UINT device_id = (g_audio.output_device_id == UINT32_MAX) ? WAVE_MAPPER : (UINT)g_audio.output_device_id;
     MMRESULT result = waveOutOpen(&stream->handle,
-                                  WAVE_MAPPER,
+                                  device_id,
                                   fmt,
                                   (DWORD_PTR)audio_waveout_callback,
                                   (DWORD_PTR)stream,
@@ -291,6 +297,16 @@ static void audio_stream_close(AudioStream *stream)
     stream->id = 0;
     memset(&stream->format, 0, sizeof(WAVEFORMATEX));
     InterlockedExchange(&stream->closing, 0);
+}
+
+static void audio_close_all_streams(void)
+{
+    for (size_t i = 0; i < AUDIO_MAX_STREAMS; ++i) {
+        AudioStream *stream = &g_audio.streams[i];
+        if (stream->handle) {
+            audio_stream_close(stream);
+        }
+    }
 }
 
 static AudioStream *audio_stream_acquire(AudioStreamType type,
@@ -351,7 +367,15 @@ static bool audio_stream_queue_pcm(AudioStream *stream,
     }
 
     int16_t *dst = (int16_t *)buffer->data;
-    float gain = audio_clamp(volume, 0.0f, 1.0f) * audio_clamp(g_audio.master_volume, 0.0f, 1.0f);
+    float category_volume = 1.0f;
+    if (stream->type == AUDIO_STREAM_EFFECT) {
+        category_volume = g_audio.effects_volume;
+    } else if (stream->type == AUDIO_STREAM_VOICE) {
+        category_volume = g_audio.voice_volume;
+    }
+    float gain = audio_clamp(volume, 0.0f, 1.0f) *
+                 audio_clamp(category_volume, 0.0f, 1.0f) *
+                 audio_clamp(g_audio.master_volume, 0.0f, 1.0f);
 
     for (size_t i = 0; i < total_samples; ++i) {
         float sample = (float)samples[i] * gain;
@@ -587,6 +611,11 @@ bool audio_init(void)
     g_audio.initialized = 1;
     g_audio.master_volume = 1.0f;
     g_audio.music_volume = 1.0f;
+    g_audio.effects_volume = 1.0f;
+    g_audio.voice_volume = 1.0f;
+    g_audio.microphone_volume = 1.0f;
+    g_audio.output_device_id = UINT32_MAX;
+    g_audio.input_device_id = UINT32_MAX;
     g_audio.next_effect_id = 1;
 
 #if defined(_WIN32)
@@ -729,6 +758,36 @@ float audio_music_volume(void)
     return g_audio.music_volume;
 }
 
+void audio_set_effects_volume(float volume)
+{
+    g_audio.effects_volume = audio_clamp(volume, 0.0f, 1.0f);
+}
+
+float audio_effects_volume(void)
+{
+    return g_audio.effects_volume;
+}
+
+void audio_set_voice_volume(float volume)
+{
+    g_audio.voice_volume = audio_clamp(volume, 0.0f, 1.0f);
+}
+
+float audio_voice_volume(void)
+{
+    return g_audio.voice_volume;
+}
+
+void audio_set_microphone_volume(float volume)
+{
+    g_audio.microphone_volume = audio_clamp(volume, 0.0f, 1.0f);
+}
+
+float audio_microphone_volume(void)
+{
+    return g_audio.microphone_volume;
+}
+
 bool audio_effect_play_file(const char *path, float volume)
 {
     if (!g_audio.initialized || !path || !path[0]) {
@@ -822,5 +881,114 @@ void audio_voice_stop_all(void)
             audio_stream_close(stream);
         }
     }
+#endif
+}
+
+bool audio_select_output_device(uint32_t device_id)
+{
+    g_audio.output_device_id = device_id;
+#if defined(_WIN32)
+    if (!g_audio.initialized) {
+        return true;
+    }
+    audio_close_all_streams();
+    g_audio.next_effect_id = 1;
+    return true;
+#else
+    return false;
+#endif
+}
+
+uint32_t audio_current_output_device(void)
+{
+    return g_audio.output_device_id;
+}
+
+size_t audio_enumerate_output_devices(AudioDeviceInfo *out_devices, size_t max_devices)
+{
+#if defined(_WIN32)
+    size_t count = 0;
+    UINT device_count = waveOutGetNumDevs();
+    if (!out_devices || max_devices == 0U) {
+        return (size_t)device_count + 1U;
+    }
+
+    size_t index = 0;
+    AudioDeviceInfo *info = &out_devices[index++];
+    info->id = UINT32_MAX;
+    info->is_default = true;
+    info->is_input = false;
+    snprintf(info->name, sizeof(info->name), "System Default Output");
+
+    for (UINT i = 0; i < device_count && index < max_devices; ++i) {
+        WAVEOUTCAPSA caps;
+        MMRESULT result = waveOutGetDevCapsA(i, &caps, sizeof(caps));
+        if (result != MMSYSERR_NOERROR) {
+            continue;
+        }
+        info = &out_devices[index++];
+        info->id = i;
+        info->is_default = false;
+        info->is_input = false;
+        audio_copy_string(info->name, sizeof(info->name), caps.szPname);
+    }
+    count = index;
+    return count;
+#else
+    (void)out_devices;
+    (void)max_devices;
+    return 0;
+#endif
+}
+
+bool audio_select_input_device(uint32_t device_id)
+{
+    g_audio.input_device_id = device_id;
+#if defined(_WIN32)
+    return true;
+#else
+    return false;
+#endif
+}
+
+uint32_t audio_current_input_device(void)
+{
+    return g_audio.input_device_id;
+}
+
+size_t audio_enumerate_input_devices(AudioDeviceInfo *out_devices, size_t max_devices)
+{
+#if defined(_WIN32)
+    size_t count = 0;
+    UINT device_count = waveInGetNumDevs();
+    if (!out_devices || max_devices == 0U) {
+        return (size_t)device_count + 1U;
+    }
+
+    size_t index = 0;
+    AudioDeviceInfo *info = &out_devices[index++];
+    info->id = UINT32_MAX;
+    info->is_default = true;
+    info->is_input = true;
+    snprintf(info->name, sizeof(info->name), "System Default Input");
+
+    for (UINT i = 0; i < device_count && index < max_devices; ++i) {
+        WAVEINCAPSA caps;
+        MMRESULT result = waveInGetDevCapsA(i, &caps, sizeof(caps));
+        if (result != MMSYSERR_NOERROR) {
+            continue;
+        }
+        info = &out_devices[index++];
+        info->id = i;
+        info->is_default = false;
+        info->is_input = true;
+        audio_copy_string(info->name, sizeof(info->name), caps.szPname);
+    }
+    count = index;
+    return count;
+#else
+    (void)out_devices;
+    (void)max_devices;
+    return 0;
 #endif
 }

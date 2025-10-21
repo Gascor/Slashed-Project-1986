@@ -12,11 +12,26 @@ typedef struct PreferencesResolution {
     const char *label;
 } PreferencesResolution;
 
+typedef enum PreferencesVoiceActivationMode {
+    PREFERENCES_VOICE_PUSH_TO_TALK = 0,
+    PREFERENCES_VOICE_VOICE_DETECTION = 1,
+    PREFERENCES_VOICE_ACTIVATION_COUNT
+} PreferencesVoiceActivationMode;
+
 typedef struct EnginePreferences {
     PlatformWindowMode window_mode;
     uint32_t resolution_width;
     uint32_t resolution_height;
     PlatformKey bindings[INPUT_ACTION_COUNT];
+    float volume_master;
+    float volume_music;
+    float volume_effects;
+    float volume_voice;
+    float volume_microphone;
+    uint32_t audio_output_device;
+    uint32_t audio_input_device;
+    PreferencesVoiceActivationMode voice_activation_mode;
+    float voice_activation_threshold_db;
 } EnginePreferences;
 
 void preferences_init(void);
@@ -33,4 +48,3 @@ bool preferences_save(void);
 const char *preferences_config_path(void);
 const PreferencesResolution *preferences_resolutions(size_t *out_count);
 size_t preferences_find_resolution_index(uint32_t width, uint32_t height);
-

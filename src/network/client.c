@@ -358,37 +358,37 @@ static void network_client_handle_packet(NetworkClient *client, const ENetEvent 
         break;
     case NETWORK_MESSAGE_WEAPON_EVENT:
         if (size >= 2 + NETWORK_WEAPON_EVENT_DATA_SIZE) {
-            NetworkWeaponEvent event = {0};
-            event.actor_id = data[1];
+            NetworkWeaponEvent weapon_event = {0};
+            weapon_event.actor_id = data[1];
             const enet_uint8 *payload = data + 2;
             size_t offset = 0;
 
-            event.type = (NetworkWeaponEventType)payload[offset];
+            weapon_event.type = (NetworkWeaponEventType)payload[offset];
             offset += 1;
 
             uint16_t weapon_raw = 0;
             memcpy(&weapon_raw, payload + offset, sizeof(uint16_t));
-            event.weapon_id = weapon_raw;
+            weapon_event.weapon_id = weapon_raw;
             offset += sizeof(uint16_t);
 
             int16_t clip_raw = 0;
             memcpy(&clip_raw, payload + offset, sizeof(int16_t));
-            event.ammo_in_clip = clip_raw;
+            weapon_event.ammo_in_clip = clip_raw;
             offset += sizeof(int16_t);
 
             int16_t reserve_raw = 0;
             memcpy(&reserve_raw, payload + offset, sizeof(int16_t));
-            event.ammo_reserve = reserve_raw;
+            weapon_event.ammo_reserve = reserve_raw;
             offset += sizeof(int16_t);
 
-            memcpy(&event.pickup_id, payload + offset, sizeof(uint32_t));
+            memcpy(&weapon_event.pickup_id, payload + offset, sizeof(uint32_t));
             offset += sizeof(uint32_t);
 
             if (offset + sizeof(float) * 3 <= NETWORK_WEAPON_EVENT_DATA_SIZE) {
-                memcpy(event.position, payload + offset, sizeof(float) * 3);
+                memcpy(weapon_event.position, payload + offset, sizeof(float) * 3);
             }
 
-            network_client_enqueue_weapon_event(client, &event);
+            network_client_enqueue_weapon_event(client, &weapon_event);
         }
         break;
     case NETWORK_MESSAGE_VOICE_DATA:
