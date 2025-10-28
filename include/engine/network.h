@@ -6,6 +6,14 @@
 
 #include "engine/network_master.h"
 
+#ifndef ENET_PACKET_FLAG_UNSEQUENCED
+#define ENET_PACKET_FLAG_UNSEQUENCED (1 << 1)
+#endif
+
+#ifndef ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT
+#define ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT (1 << 3)
+#endif
+
 typedef struct NetworkClient NetworkClient;
 
 #define NETWORK_MAX_REMOTE_PLAYERS 16

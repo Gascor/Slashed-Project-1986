@@ -233,7 +233,7 @@ static bool platform_window_apply_windowed(PlatformWindow *window, uint32_t widt
 
     ChangeDisplaySettings(NULL, 0);
 
-    DWORD style = WS_OVERLAPPEDWINDOW;
+    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     DWORD exstyle = WS_EX_APPWINDOW;
     platform_window_apply_style(window->hwnd, style, exstyle);
 
@@ -268,6 +268,14 @@ static bool platform_window_apply_windowed(PlatformWindow *window, uint32_t widt
         return false;
     }
 
+    SetWindowPos(window->hwnd,
+                 HWND_NOTOPMOST,
+                 0,
+                 0,
+                 0,
+                 0,
+                 SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
     ShowWindow(window->hwnd, SW_SHOW);
     window->fullscreen_active = false;
     window->windowed_style = style;
@@ -299,11 +307,11 @@ static bool platform_window_apply_borderless(PlatformWindow *window, uint32_t wi
         y = work_area.top + ((work_area.bottom - work_area.top) - (int)height) / 2;
     }
 
-    UINT flags = SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_FRAMECHANGED;
+    UINT flags = SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW;
     if (!SetWindowPos(window->hwnd,
-                      HWND_TOP,
-                      x,
-                      y,
+                      HWND_TOPMOST,
+                      0,
+                      0,
                       (int)width,
                       (int)height,
                       flags)) {
@@ -573,7 +581,7 @@ PlatformWindow *platform_create_window(const PlatformWindowDesc *desc)
     window->fullscreen_active = false;
     memset(&window->input, 0, sizeof(window->input));
 
-    DWORD style = WS_OVERLAPPEDWINDOW;
+    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     RECT rect = {0, 0, (LONG)requested_width, (LONG)requested_height};
     AdjustWindowRect(&rect, style, FALSE);
 

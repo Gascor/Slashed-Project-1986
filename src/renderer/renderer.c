@@ -5,11 +5,18 @@
 #include <stdlib.h>
 
 #if defined(_WIN32)
+#    define COBJMACROS
 #    define WIN32_LEAN_AND_MEAN
 #    include <windows.h>
 #    include <wingdi.h>
+#    include <objbase.h>
+#    include <wincodec.h>
 #endif
 #include <GL/gl.h>
+
+#ifndef GL_CLAMP_TO_EDGE
+#    define GL_CLAMP_TO_EDGE 0x812F
+#endif
 
 struct Renderer {
     float clear_color[4];
@@ -19,6 +26,12 @@ struct Renderer {
     bool font_ready;
     GLuint font_base;
     float font_line_height;
+#if defined(_WIN32)
+    bool logo_attempted;
+    GLuint logo_texture;
+    int logo_width;
+    int logo_height;
+#endif
 };
 
 static void renderer_apply_clear_color(const Renderer *renderer)
@@ -85,6 +98,16 @@ static void renderer_initialize_font(Renderer *renderer)
 #endif
 }
 
+#if defined(_WIN32)
+static bool renderer_load_logo(Renderer *renderer);
+static void renderer_draw_ui_textured_rect(Renderer *renderer,
+                                           GLuint texture,
+                                           float x,
+                                           float y,
+                                           float width,
+                                           float height);
+#endif
+
 Renderer *renderer_create(void)
 {
     Renderer *renderer = (Renderer *)calloc(1, sizeof(Renderer));
@@ -102,6 +125,12 @@ Renderer *renderer_create(void)
     renderer->font_ready = false;
     renderer->font_base = 0;
     renderer->font_line_height = 18.0f;
+#if defined(_WIN32)
+    renderer->logo_attempted = false;
+    renderer->logo_texture = 0;
+    renderer->logo_width = 0;
+    renderer->logo_height = 0;
+#endif
 
     renderer_apply_clear_color(renderer);
     renderer_initialize_font(renderer);
@@ -126,6 +155,10 @@ void renderer_destroy(Renderer *renderer)
         glDeleteLists(renderer->font_base, 96);
         renderer->font_base = 0;
         renderer->font_ready = false;
+    }
+    if (renderer->logo_texture != 0) {
+        glDeleteTextures(1, &renderer->logo_texture);
+        renderer->logo_texture = 0;
     }
 #endif
 
@@ -432,6 +465,41 @@ void renderer_draw_ui_rect(Renderer *renderer, float x, float y, float width, fl
     glEnd();
 }
 
+#if defined(_WIN32)
+static void renderer_draw_ui_textured_rect(Renderer *renderer,
+                                           GLuint texture,
+                                           float x,
+                                           float y,
+                                           float width,
+                                           float height)
+{
+    if (!renderer || !renderer->ui_active || texture == 0) {
+        return;
+    }
+
+    GLboolean was_enabled = glIsEnabled(GL_TEXTURE_2D);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex2f(x, y);
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex2f(x + width, y);
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex2f(x + width, y + height);
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex2f(x, y + height);
+    glEnd();
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+    if (!was_enabled) {
+        glDisable(GL_TEXTURE_2D);
+    }
+}
+#endif
+
 void renderer_draw_crosshair(Renderer *renderer, float center_x, float center_y, float size, float spread, float thickness)
 {
     (void)renderer;
@@ -479,6 +547,226 @@ void renderer_end_ui(Renderer *renderer)
     renderer->ui_active = false;
 }
 
+#if defined(_WIN32)
+static bool renderer_load_logo(Renderer *renderer)
+{
+    if (!renderer) {
+        return false;
+    }
+    if (renderer->logo_attempted) {
+        return renderer->logo_texture != 0;
+    }
+
+    renderer->logo_attempted = true;
+
+    HRESULT hr_init = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    bool co_initialized = false;
+    if (SUCCEEDED(hr_init)) {
+        co_initialized = true;
+    } else if (hr_init != RPC_E_CHANGED_MODE) {
+        return false;
+    }
+
+    IWICImagingFactory *factory = NULL;
+    HRESULT hr = CoCreateInstance(&CLSID_WICImagingFactory,
+                                  NULL,
+                                  CLSCTX_INPROC_SERVER,
+                                  &IID_IWICImagingFactory,
+                                  (LPVOID *)&factory);
+    if (FAILED(hr) || !factory) {
+        if (co_initialized) {
+            CoUninitialize();
+        }
+        return false;
+    }
+
+    WCHAR path_w[MAX_PATH];
+    const char *path = "assets/textures/WT-TB_2024_Logo.png";
+    int count = MultiByteToWideChar(CP_UTF8, 0, path, -1, path_w, MAX_PATH);
+    if (count <= 0) {
+        IWICImagingFactory_Release(factory);
+        if (co_initialized) {
+            CoUninitialize();
+        }
+        return false;
+    }
+
+    IWICBitmapDecoder *decoder = NULL;
+    hr = IWICImagingFactory_CreateDecoderFromFilename(factory,
+                                                      path_w,
+                                                      NULL,
+                                                      GENERIC_READ,
+                                                      WICDecodeMetadataCacheOnLoad,
+                                                      &decoder);
+    if (FAILED(hr) || !decoder) {
+        IWICImagingFactory_Release(factory);
+        if (co_initialized) {
+            CoUninitialize();
+        }
+        return false;
+    }
+
+    IWICBitmapFrameDecode *frame = NULL;
+    hr = IWICBitmapDecoder_GetFrame(decoder, 0, &frame);
+    if (FAILED(hr) || !frame) {
+        IWICBitmapDecoder_Release(decoder);
+        IWICImagingFactory_Release(factory);
+        if (co_initialized) {
+            CoUninitialize();
+        }
+        return false;
+    }
+
+    IWICFormatConverter *converter = NULL;
+    hr = IWICImagingFactory_CreateFormatConverter(factory, &converter);
+    if (FAILED(hr) || !converter) {
+        IWICBitmapFrameDecode_Release(frame);
+        IWICBitmapDecoder_Release(decoder);
+        IWICImagingFactory_Release(factory);
+        if (co_initialized) {
+            CoUninitialize();
+        }
+        return false;
+    }
+
+    hr = IWICFormatConverter_Initialize(converter,
+                                        (IWICBitmapSource *)frame,
+                                        &GUID_WICPixelFormat32bppRGBA,
+                                        WICBitmapDitherTypeNone,
+                                        NULL,
+                                        0.0f,
+                                        WICBitmapPaletteTypeCustom);
+    if (FAILED(hr)) {
+        IWICFormatConverter_Release(converter);
+        IWICBitmapFrameDecode_Release(frame);
+        IWICBitmapDecoder_Release(decoder);
+        IWICImagingFactory_Release(factory);
+        if (co_initialized) {
+            CoUninitialize();
+        }
+        return false;
+    }
+
+    UINT width = 0;
+    UINT height = 0;
+    hr = IWICBitmapSource_GetSize((IWICBitmapSource *)converter, &width, &height);
+    if (FAILED(hr) || width == 0 || height == 0) {
+        IWICFormatConverter_Release(converter);
+        IWICBitmapFrameDecode_Release(frame);
+        IWICBitmapDecoder_Release(decoder);
+        IWICImagingFactory_Release(factory);
+        if (co_initialized) {
+            CoUninitialize();
+        }
+        return false;
+    }
+
+    UINT stride = width * 4;
+    UINT buffer_size = stride * height;
+    BYTE *pixels = (BYTE *)malloc(buffer_size);
+    if (!pixels) {
+        IWICFormatConverter_Release(converter);
+        IWICBitmapFrameDecode_Release(frame);
+        IWICBitmapDecoder_Release(decoder);
+        IWICImagingFactory_Release(factory);
+        if (co_initialized) {
+            CoUninitialize();
+        }
+        return false;
+    }
+
+    hr = IWICBitmapSource_CopyPixels((IWICBitmapSource *)converter, NULL, stride, buffer_size, pixels);
+    if (FAILED(hr)) {
+        free(pixels);
+        IWICFormatConverter_Release(converter);
+        IWICBitmapFrameDecode_Release(frame);
+        IWICBitmapDecoder_Release(decoder);
+        IWICImagingFactory_Release(factory);
+        if (co_initialized) {
+            CoUninitialize();
+        }
+        return false;
+    }
+
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA,
+                 (GLsizei)width,
+                 (GLsizei)height,
+                 0,
+                 GL_RGBA,
+                 GL_UNSIGNED_BYTE,
+                 pixels);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    free(pixels);
+    IWICFormatConverter_Release(converter);
+    IWICBitmapFrameDecode_Release(frame);
+    IWICBitmapDecoder_Release(decoder);
+    IWICImagingFactory_Release(factory);
+    if (co_initialized) {
+        CoUninitialize();
+    }
+
+    renderer->logo_texture = texture;
+    renderer->logo_width = (int)width;
+    renderer->logo_height = (int)height;
+    return renderer->logo_texture != 0;
+}
+
+void renderer_draw_ui_logo(Renderer *renderer,
+                           float center_x,
+                           float center_y,
+                           float max_width,
+                           float max_height)
+{
+    if (!renderer || !renderer->ui_active) {
+        return;
+    }
+    if (!renderer_load_logo(renderer)) {
+        return;
+    }
+
+    if (renderer->logo_width <= 0 || renderer->logo_height <= 0) {
+        return;
+    }
+
+    float aspect = (float)renderer->logo_width / (float)renderer->logo_height;
+    float width = max_width;
+    float height = width / aspect;
+    if (height > max_height) {
+        height = max_height;
+        width = height * aspect;
+    }
+    if (width <= 0.0f || height <= 0.0f) {
+        return;
+    }
+
+    float x = center_x - width * 0.5f;
+    float y = center_y - height * 0.5f;
+    renderer_draw_ui_textured_rect(renderer, renderer->logo_texture, x, y, width, height);
+}
+#else
+void renderer_draw_ui_logo(Renderer *renderer,
+                           float center_x,
+                           float center_y,
+                           float max_width,
+                           float max_height)
+{
+    (void)renderer;
+    (void)center_x;
+    (void)center_y;
+    (void)max_width;
+    (void)max_height;
+}
+#endif
 
 
 

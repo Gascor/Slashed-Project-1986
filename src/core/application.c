@@ -375,6 +375,38 @@ static const char *app_server_mode_label(uint8_t mode)
     return NULL;
 }
 
+static float ui_hover_mix(double time_seconds)
+{
+    float pulse = sinf((float)(time_seconds * 2.0 * (float)M_PI));
+    return (pulse * 0.5f + 0.5f) * 0.6f;
+}
+
+static void ui_apply_interaction_tint(float *r,
+                                      float *g,
+                                      float *b,
+                                      bool hovered,
+                                      bool pressed,
+                                      double time_seconds)
+{
+    if (!r || !g || !b) {
+        return;
+    }
+
+    if (hovered && !pressed) {
+        float mix = ui_hover_mix(time_seconds);
+        *r += (1.0f - *r) * mix;
+        *g += (1.0f - *g) * mix;
+        *b += (1.0f - *b) * mix;
+    }
+
+    if (pressed) {
+        const float darken = 0.7f;
+        const float scale = 1.0f - darken;
+        *r *= scale;
+        *g *= scale;
+        *b *= scale;
+    }
+}
 
 static bool ui_button(Renderer *renderer,
                       const InputState *input,
@@ -383,6 +415,7 @@ static bool ui_button(Renderer *renderer,
                       float width,
                       float height,
                       const char *label,
+                      double time_seconds,
                       float alpha)
 {
     if (!renderer || !label) {
@@ -394,9 +427,23 @@ static bool ui_button(Renderer *renderer,
     bool hovered = input && point_in_rect(px, py, x, y, width, height);
     bool pressed = hovered && input && input->mouse_left_pressed;
 
-    const float base = hovered ? 0.22f : 0.12f;
-    renderer_draw_ui_rect(renderer, x, y, width, height, base, base * 0.9f, base * 0.8f, 0.9f * alpha);
-    renderer_draw_ui_text(renderer, x + 24.0f, y + height * 0.5f - 8.0f, label, 0.95f, 0.95f, 0.95f, 1.0f * alpha);
+    float base = hovered ? 0.22f : 0.12f;
+    float r = base;
+    float g = base * 0.9f;
+    float b = base * 0.8f;
+    ui_apply_interaction_tint(&r, &g, &b, hovered, pressed, time_seconds);
+
+    float rect_alpha = 0.9f * alpha;
+    if (hovered && !pressed) {
+        float mix = ui_hover_mix(time_seconds);
+        rect_alpha += (1.0f - rect_alpha) * (mix * 0.5f);
+    }
+    if (rect_alpha > 1.0f) {
+        rect_alpha = 1.0f;
+    }
+
+    renderer_draw_ui_rect(renderer, x, y, width, height, r, g, b, rect_alpha);
+    renderer_draw_ui_text(renderer, x + 24.0f, y + height * 0.5f - 8.0f, label, 0.97f, 0.97f, 0.98f, 1.0f * alpha);
     return pressed;
 }
 
@@ -416,44 +463,204 @@ static void app_render_main_menu(AppState *app,
     const float width = (float)vp_width;
     const float height = (float)vp_height;
 
-    const float panel_width = 420.0f;
-    const float panel_height = 380.0f;
-    const float panel_x = (width - panel_width) * 0.5f;
-    const float panel_y = (height - panel_height) * 0.5f;
+    const float frame_margin = 48.0f;
+    const bool compact_layout = width >= 1600.0f && height >= 900.0f;
+    const float target_panel_width = compact_layout ? (width * 0.20f) : 840.0f;
+    const float target_panel_height = compact_layout ? (height * 0.70f) : 760.0f;
+    float panel_width = target_panel_width;
+    float panel_height = target_panel_height;
 
-    renderer_draw_ui_rect(renderer, panel_x - 12.0f, panel_y - 12.0f, panel_width + 24.0f, panel_height + 24.0f, 0.04f, 0.04f, 0.07f, 0.85f);
-    renderer_draw_ui_text(renderer, panel_x + 32.0f, panel_y + 32.0f, "SLASHED PROJECT 1986", 0.95f, 0.95f, 0.98f, 1.0f);
+    const float max_panel_width = width - frame_margin * 2.0f;
+    const float max_panel_height = height - frame_margin * 2.0f;
+    if (panel_width > max_panel_width) {
+        panel_width = max_panel_width;
+    }
+    if (panel_height > max_panel_height) {
+        panel_height = max_panel_height;
+    }
 
-    float button_y = panel_y + 90.0f;
-    const float button_height = 52.0f;
-    const float button_width = panel_width - 64.0f;
-    const float button_x = panel_x + 32.0f;
+    if (!compact_layout) {
+        if (panel_width < 480.0f) {
+            panel_width = width * 0.9f;
+        }
+        if (panel_height < 420.0f) {
+            panel_height = height * 0.85f;
+        }
+    }
 
-    if (ui_button(renderer, input, button_x, button_y, button_width, button_height, "Create A Match", 1.0f)) {
+    float panel_x = compact_layout ? frame_margin : (width - panel_width) * 0.5f;
+    float panel_y = compact_layout ? (height - frame_margin - panel_height) : ((height - panel_height) * 0.5f);
+    if (panel_y < frame_margin) {
+        panel_y = frame_margin;
+    }
+    float logo_center_x = panel_x + panel_width * 0.5f;
+    float logo_center_y = height * 0.15f;
+    float logo_max_width = panel_width * 0.9f;
+    float logo_max_height = height * 0.18f;
+    renderer_draw_ui_logo(renderer, logo_center_x, logo_center_y, logo_max_width, logo_max_height);
+
+    renderer_draw_ui_rect(renderer,
+                          panel_x - 18.0f,
+                          panel_y - 18.0f,
+                          panel_width + 36.0f,
+                          panel_height + 36.0f,
+                          0.025f,
+                          0.025f,
+                          0.045f,
+                          0.86f);
+    renderer_draw_ui_rect(renderer,
+                          panel_x,
+                          panel_y,
+                          panel_width,
+                          panel_height,
+                          0.055f,
+                          0.055f,
+                          0.085f,
+                          0.94f);
+
+    const float header_height = panel_height * 0.22f;
+    renderer_draw_ui_rect(renderer,
+                          panel_x,
+                          panel_y,
+                          panel_width,
+                          header_height,
+                          0.08f,
+                          0.08f,
+                          0.12f,
+                          0.88f);
+
+    const float header_text_x = compact_layout ? (panel_x + 20.0f) : (panel_x + 64.0f);
+    const char *menu_subtitle = compact_layout ? "Prototype extraction FPS." : "A tactical extraction shooter prototype set in a collapsed 1980s parallel city.";
+    renderer_draw_ui_text(renderer, header_text_x, panel_y + 64.0f, "SLASHED PROJECT 1986", 0.95f, 0.95f, 0.98f, 1.0f);
+    renderer_draw_ui_text(renderer,
+                          header_text_x,
+                          panel_y + (compact_layout ? 96.0f : 108.0f),
+                          menu_subtitle,
+                          0.78f,
+                          0.78f,
+                          0.86f,
+                          0.92f);
+
+    const float button_column_x = compact_layout ? (panel_x + 16.0f) : (panel_x + 72.0f);
+    float button_y = panel_y + header_height + (compact_layout ? 32.0f : 48.0f);
+    const float button_height = compact_layout ? 52.0f : 62.0f;
+    const float button_spacing = compact_layout ? 18.0f : 22.0f;
+    float button_width = compact_layout ? (panel_width - 32.0f) : (panel_width - (button_column_x - panel_x) - 92.0f);
+    if (button_width < 80.0f) {
+        button_width = 80.0f;
+    }
+
+    if (ui_button(renderer,
+                  input,
+                  button_column_x,
+                  button_y,
+                  button_width,
+                  button_height,
+                  "Create A Match",
+                  app ? app->menu_time : 0.0,
+                  1.0f)) {
         if (start_local_game) {
             *start_local_game = true;
         }
     }
-    button_y += button_height + 10.0f;
+    button_y += button_height + button_spacing;
 
-    if (ui_button(renderer, input, button_x, button_y, button_width, button_height, "Join A Server", 1.0f)) {
+    if (ui_button(renderer,
+                  input,
+                  button_column_x,
+                  button_y,
+                  button_width,
+                  button_height,
+                  "Join A Server",
+                  app ? app->menu_time : 0.0,
+                  1.0f)) {
         app->next_screen = APP_SCREEN_SERVER_BROWSER;
     }
-    button_y += button_height + 10.0f;
+    button_y += button_height + button_spacing;
 
-    if (ui_button(renderer, input, button_x, button_y, button_width, button_height, "Settings", 1.0f)) {
+    if (ui_button(renderer,
+                  input,
+                  button_column_x,
+                  button_y,
+                  button_width,
+                  button_height,
+                  "Settings",
+                  app ? app->menu_time : 0.0,
+                  1.0f)) {
         app->next_screen = APP_SCREEN_OPTIONS;
     }
-    button_y += button_height + 10.0f;
+    button_y += button_height + button_spacing;
 
-    if (ui_button(renderer, input, button_x, button_y, button_width, button_height, "About", 1.0f)) {
+    if (ui_button(renderer,
+                  input,
+                  button_column_x,
+                  button_y,
+                  button_width,
+                  button_height,
+                  "About",
+                  app ? app->menu_time : 0.0,
+                  1.0f)) {
         app->next_screen = APP_SCREEN_ABOUT;
     }
-    button_y += button_height + 10.0f;
+    button_y += button_height + button_spacing;
 
-    if (ui_button(renderer, input, button_x, button_y, button_width, button_height, "Quit", 1.0f)) {
+    if (ui_button(renderer,
+                  input,
+                  button_column_x,
+                  button_y,
+                  button_width,
+                  button_height,
+                  "Quit",
+                  app ? app->menu_time : 0.0,
+                  1.0f)) {
         app->request_shutdown = true;
     }
+
+    const char *footer_line1 = "Powered by Slashed Engine 1";
+    const char *footer_line2 = "Slashed Project 1986 - Build 0000008";
+    const float footer_margin = 28.0f;
+    const float line_spacing = 20.0f;
+    const float line_height = 18.0f;
+    const float align_padding = 12.0f;
+    const float char_width = 8.0f;
+
+    float footer_bottom = height - footer_margin;
+    float min_footer_bottom = panel_y + panel_height + line_spacing + line_height;
+    if (footer_bottom < min_footer_bottom) {
+        footer_bottom = min_footer_bottom;
+    }
+
+    float line2_width = (float)strlen(footer_line2) * char_width;
+    float line1_width = (float)strlen(footer_line1) * char_width;
+
+    float line2_x = width - footer_margin - align_padding - line2_width;
+    float line1_x = width - footer_margin - align_padding - line1_width;
+    if (line2_x < footer_margin) {
+        line2_x = footer_margin;
+    }
+    if (line1_x < footer_margin) {
+        line1_x = footer_margin;
+    }
+
+    float line2_y = footer_bottom - line_height;
+    float line1_y = line2_y - line_spacing;
+
+    renderer_draw_ui_text(renderer,
+                          line1_x,
+                          line1_y,
+                          footer_line1,
+                          0.72f,
+                          0.82f,
+                          0.94f,
+                          0.95f);
+    renderer_draw_ui_text(renderer,
+                          line2_x,
+                          line2_y,
+                          footer_line2,
+                          0.65f,
+                          0.75f,
+                          0.88f,
+                          0.9f);
 
     renderer_end_ui(renderer);
 }
@@ -490,7 +697,11 @@ static void app_render_options(AppState *app,
     context.voice_activation_mode = prefs_data ? &prefs_data->voice_activation_mode : NULL;
     context.voice_activation_threshold_db = prefs_data ? &prefs_data->voice_activation_threshold_db : NULL;
 
-    SettingsMenuResult result = settings_menu_render(&app->settings_menu, &context, renderer, input);
+    SettingsMenuResult result = settings_menu_render(&app->settings_menu,
+                                                     &context,
+                                                     renderer,
+                                                     input,
+                                                     app ? app->menu_time : 0.0);
     if (result.back_requested) {
         app->next_screen = APP_SCREEN_MAIN_MENU;
         settings_menu_cancel_rebind(&app->settings_menu);
@@ -615,7 +826,15 @@ static void app_render_about(AppState *app,
                           0.9f,
                           0.95f);
 
-    if (ui_button(renderer, input, panel_x + 32.0f, panel_y + panel_height - 64.0f, panel_width - 64.0f, 48.0f, "Back", 1.0f)) {
+    if (ui_button(renderer,
+                  input,
+                  panel_x + 32.0f,
+                  panel_y + panel_height - 64.0f,
+                  panel_width - 64.0f,
+                  48.0f,
+                  "Back",
+                  app ? app->menu_time : 0.0,
+                  1.0f)) {
         if (app) {
             app->next_screen = APP_SCREEN_MAIN_MENU;
         }
@@ -671,8 +890,16 @@ static void app_render_server_browser(AppState *app,
     const float width = (float)vp_width;
     const float height = (float)vp_height;
 
-    const float panel_width = width - 120.0f;
-    const float panel_height = height - 140.0f;
+    float panel_width = width - 120.0f;
+    float panel_height = height - 140.0f;
+    if (width >= 1920.0f) {
+        if (panel_width > 1280.0f) {
+            panel_width = 1280.0f;
+        }
+        if (panel_height > 820.0f) {
+            panel_height = 820.0f;
+        }
+    }
     const float panel_x = (width - panel_width) * 0.5f;
     const float panel_y = (height - panel_height) * 0.5f;
 
@@ -766,8 +993,24 @@ static void app_render_server_browser(AppState *app,
             bool selected = have_entries && (browser->selection == (int)i);
             bool hovered = point_in_rect(mouse_x, mouse_y, table_x, row_y, table_width, row_height);
 
-            const float base = selected ? 0.22f : (hovered ? 0.18f : 0.12f);
-            renderer_draw_ui_rect(renderer, table_x, row_y, table_width, row_height, base, base * 0.9f, base * 0.8f, 0.85f);
+            const float base = selected ? 0.24f : (hovered ? 0.18f : 0.12f);
+            float row_r = base;
+            float row_g = base * 0.9f;
+            float row_b = base * 0.8f;
+            bool row_pressed = hovered && input && input->mouse_left_down;
+            ui_apply_interaction_tint(&row_r, &row_g, &row_b, hovered, row_pressed, app ? app->menu_time : 0.0);
+            if (selected) {
+                if (row_r < 0.28f) {
+                    row_r = 0.28f;
+                }
+                if (row_g < 0.25f) {
+                    row_g = 0.25f;
+                }
+                if (row_b < 0.22f) {
+                    row_b = 0.22f;
+                }
+            }
+            renderer_draw_ui_rect(renderer, table_x, row_y, table_width, row_height, row_r, row_g, row_b, 0.88f);
 
             float cell_x = table_x + 12.0f;
             renderer_draw_ui_text(renderer,
@@ -818,6 +1061,7 @@ static void app_render_server_browser(AppState *app,
                                   footer_button_width,
                                   footer_button_height,
                                   "Join Selected",
+                                  app ? app->menu_time : 0.0,
                                   1.0f);
     footer_x += footer_button_width + 16.0f;
 
@@ -828,6 +1072,7 @@ static void app_render_server_browser(AppState *app,
                                      footer_button_width,
                                      footer_button_height,
                                      "Refresh",
+                                     app ? app->menu_time : 0.0,
                                      1.0f);
     footer_x += footer_button_width + 16.0f;
 
@@ -838,6 +1083,7 @@ static void app_render_server_browser(AppState *app,
                                   footer_button_width,
                                   footer_button_height,
                                   "Back",
+                                  app ? app->menu_time : 0.0,
                                   1.0f);
 
     if (refresh_clicked) {
@@ -1064,6 +1310,16 @@ int engine_run(const EngineConfig *config)
         viewport_height = preferred_height;
     }
     renderer_set_viewport(renderer, viewport_width, viewport_height);
+
+    PlatformWindowMode actual_mode = platform_window_mode(window);
+    if (prefs &&
+        (prefs->window_mode != actual_mode ||
+         prefs->resolution_width != viewport_width ||
+         prefs->resolution_height != viewport_height)) {
+        preferences_set_graphics(actual_mode, viewport_width, viewport_height);
+        preferences_save();
+        prefs = preferences_get();
+    }
     app.resolution_width = viewport_width;
     app.resolution_height = viewport_height;
 
@@ -1110,9 +1366,9 @@ int engine_run(const EngineConfig *config)
     app.audio_available = menu_music_ready;
     app.music_playing = false;
     app.window = window;
-    app.window_mode = preferred_mode;
-    app.resolution_width = preferred_width;
-    app.resolution_height = preferred_height;
+    app.window_mode = prefs ? prefs->window_mode : actual_mode;
+    app.resolution_width = prefs ? prefs->resolution_width : viewport_width;
+    app.resolution_height = prefs ? prefs->resolution_height : viewport_height;
 
     snprintf(app.master_server_host, sizeof(app.master_server_host), "%s", APP_MASTER_DEFAULT_HOST);
     app.master_config.host = app.master_server_host;
@@ -1390,6 +1646,13 @@ int engine_run(const EngineConfig *config)
 
     return exit_code;
 }
+
+
+
+
+
+
+
 
 
 

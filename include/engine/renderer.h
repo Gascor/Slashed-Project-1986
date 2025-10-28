@@ -27,6 +27,7 @@ void renderer_begin_ui(Renderer *renderer);
 void renderer_draw_ui_text(Renderer *renderer, float x, float y, const char *text, float r, float g, float b, float a);
 
 void renderer_draw_ui_rect(Renderer *renderer, float x, float y, float width, float height, float r, float g, float b, float a);
+void renderer_draw_ui_logo(Renderer *renderer, float center_x, float center_y, float max_width, float max_height);
 void renderer_draw_crosshair(Renderer *renderer, float center_x, float center_y, float size, float spread, float thickness);
 void renderer_end_ui(Renderer *renderer);
 

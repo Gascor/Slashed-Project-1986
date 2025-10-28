@@ -1,10 +1,15 @@
 ﻿#include "engine/settings_menu.h"
 #include "engine/renderer.h"
+#include "engine/audio.h"
 
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+#ifndef M_PI
+#    define M_PI 3.14159265358979323846
+#endif
 
 #define SETTINGS_PANEL_MARGIN            36.0f
 #define SETTINGS_TABS_HEIGHT             42.0f
@@ -15,6 +20,70 @@
 #define SETTINGS_LIST_HEADER_HEIGHT      30.0f
 #define SETTINGS_LIST_SPACING            10.0f
 #define SETTINGS_DEFAULT_FEEDBACK_FRAMES 180
+
+static double g_settings_ui_time = 0.0;
+
+static float settings_hover_mix(void)
+{
+    float pulse = sinf((float)(g_settings_ui_time * 2.0 * (float)M_PI));
+    return (pulse * 0.5f + 0.5f) * 0.6f;
+}
+
+static void settings_apply_interaction_tint(float *r,
+                                            float *g,
+                                            float *b,
+                                            bool hovered,
+                                            bool pressed)
+{
+    if (!r || !g || !b) {
+        return;
+    }
+
+    if (hovered && !pressed) {
+        float mix = settings_hover_mix();
+        *r += (1.0f - *r) * mix;
+        *g += (1.0f - *g) * mix;
+        *b += (1.0f - *b) * mix;
+    }
+
+    if (pressed) {
+        const float darken = 0.7f;
+        const float scale = 1.0f - darken;
+        *r *= scale;
+        *g *= scale;
+        *b *= scale;
+    }
+}
+
+static uint32_t settings_gcd_uint(uint32_t a, uint32_t b)
+{
+    while (b != 0U) {
+        uint32_t r = a % b;
+        a = b;
+        b = r;
+    }
+    return a ? a : 1U;
+}
+
+static void settings_format_resolution(char *buffer,
+                                       size_t buffer_size,
+                                       uint32_t width,
+                                       uint32_t height)
+{
+    if (!buffer || buffer_size == 0U) {
+        return;
+    }
+
+    if (width == 0U || height == 0U) {
+        buffer[0] = '\0';
+        return;
+    }
+
+    uint32_t g = settings_gcd_uint(width, height);
+    uint32_t aspect_x = width / g;
+    uint32_t aspect_y = height / g;
+    snprintf(buffer, buffer_size, "%u x %u (%u:%u)", width, height, aspect_x, aspect_y);
+}
 
 static bool point_in_rect(float px, float py, float rx, float ry, float rw, float rh)
 {
@@ -151,9 +220,24 @@ static bool settings_button(SettingsMenuState *state,
     bool hovered = !blocked && input && point_in_rect(mx, my, x, y, width, height);
     bool pressed = hovered && input && input->mouse_left_pressed;
 
-    float base = highlighted ? 0.28f : (hovered ? 0.22f : 0.12f);
-    renderer_draw_ui_rect(renderer, x, y, width, height, base, base * 0.85f, base * 0.7f, highlighted ? 0.95f : 0.88f);
-    renderer_draw_ui_text(renderer, x + 20.0f, y + height * 0.5f - 8.0f, label, 0.96f, 0.96f, 0.98f, 1.0f);
+    float base = highlighted ? 0.28f : 0.12f;
+    if (!highlighted && hovered) {
+        base = 0.18f;
+    }
+    float r = base;
+    float g = base * 0.85f;
+    float b = base * 0.7f;
+    settings_apply_interaction_tint(&r, &g, &b, hovered, pressed);
+    float alpha = highlighted ? 0.95f : 0.88f;
+    if (hovered && !pressed) {
+        float mix = settings_hover_mix();
+        alpha += (1.0f - alpha) * (mix * 0.45f);
+        if (alpha > 1.0f) {
+            alpha = 1.0f;
+        }
+    }
+    renderer_draw_ui_rect(renderer, x, y, width, height, r, g, b, alpha);
+    renderer_draw_ui_text(renderer, x + 20.0f, y + height * 0.5f - 8.0f, label, 0.97f, 0.97f, 0.99f, 1.0f);
     return pressed;
 }
 
@@ -177,8 +261,23 @@ static bool settings_tab_button(SettingsMenuState *state,
     bool hovered = !blocked && input && point_in_rect(mx, my, x, y, width, height);
     bool pressed = hovered && input && input->mouse_left_pressed;
 
-    float base = active ? 0.32f : (hovered ? 0.20f : 0.14f);
-    renderer_draw_ui_rect(renderer, x, y, width, height, base, base * 0.82f, base * 0.68f, active ? 0.95f : 0.9f);
+    float base = active ? 0.32f : 0.14f;
+    if (!active && hovered) {
+        base = 0.20f;
+    }
+    float r = base;
+    float g = base * 0.82f;
+    float b = base * 0.68f;
+    settings_apply_interaction_tint(&r, &g, &b, hovered, pressed);
+    float alpha = active ? 0.95f : 0.9f;
+    if (!active && hovered && !pressed) {
+        float mix = settings_hover_mix();
+        alpha += (1.0f - alpha) * (mix * 0.35f);
+        if (alpha > 1.0f) {
+            alpha = 1.0f;
+        }
+    }
+    renderer_draw_ui_rect(renderer, x, y, width, height, r, g, b, alpha);
     renderer_draw_ui_text(renderer,
                           x + 18.0f,
                           y + height * 0.5f - 8.0f,
@@ -211,7 +310,19 @@ static bool settings_toggle(SettingsMenuState *state,
     bool pressed = hovered && input && input->mouse_left_pressed;
 
     float base = *value ? 0.25f : 0.10f;
-    renderer_draw_ui_rect(renderer, x, y, width, height, base, base * 0.85f, base * 0.7f, 0.88f);
+    float r = base;
+    float g = base * 0.85f;
+    float b = base * 0.7f;
+    settings_apply_interaction_tint(&r, &g, &b, hovered, pressed);
+    float alpha = 0.88f;
+    if (hovered && !pressed) {
+        float mix = settings_hover_mix();
+        alpha += (1.0f - alpha) * (mix * 0.4f);
+        if (alpha > 1.0f) {
+            alpha = 1.0f;
+        }
+    }
+    renderer_draw_ui_rect(renderer, x, y, width, height, r, g, b, alpha);
 
     char buffer[96];
     snprintf(buffer, sizeof(buffer), "%s: %s", label, *value ? "ON" : "OFF");
@@ -245,9 +356,25 @@ static bool settings_binding_button(SettingsMenuState *state,
     bool hovered = !disabled && !blocked && input && point_in_rect(mx, my, x, y, width, height);
     bool pressed = hovered && input && input->mouse_left_pressed;
 
-    float base = listening ? 0.32f : (hovered ? 0.22f : 0.14f);
+    float base = listening ? 0.32f : 0.14f;
+    if (!listening && hovered) {
+        base = 0.22f;
+    }
+    float r = base;
+    float g = base * 0.82f;
+    float b = base * 0.66f;
+    if (!disabled) {
+        settings_apply_interaction_tint(&r, &g, &b, hovered, pressed);
+    }
     float alpha = disabled ? 0.55f : 0.9f;
-    renderer_draw_ui_rect(renderer, x, y, width, height, base, base * 0.82f, base * 0.66f, alpha);
+    if (hovered && !pressed && !disabled) {
+        float mix = settings_hover_mix();
+        alpha += (1.0f - alpha) * (mix * 0.35f);
+        if (alpha > 1.0f) {
+            alpha = 1.0f;
+        }
+    }
+    renderer_draw_ui_rect(renderer, x, y, width, height, r, g, b, alpha);
     renderer_draw_ui_text(renderer, x + 16.0f, y + height * 0.5f - 8.0f, label, 0.96f, 0.96f, 0.98f, disabled ? 0.75f : 1.0f);
     return !disabled && pressed;
 }
@@ -282,10 +409,28 @@ static bool settings_dropdown_header(SettingsMenuState *state,
     float my = input ? (float)input->mouse_y : -1000.0f;
     bool blocked = settings_interaction_blocked(state, input, x, y, width, height, open);
     bool hovered = !blocked && input && point_in_rect(mx, my, x, y, width, height);
-    float base = open ? 0.32f : (hovered ? 0.24f : 0.14f);
+    bool pressed = hovered && input && input->mouse_left_pressed;
+    float base = open ? 0.32f : 0.14f;
+    if (!open && hovered) {
+        base = 0.24f;
+    }
+    float r = base;
+    float g = base * 0.85f;
+    float b = base * 0.7f;
+    if (!open) {
+        settings_apply_interaction_tint(&r, &g, &b, hovered, pressed);
+    } else if (pressed) {
+        settings_apply_interaction_tint(&r, &g, &b, true, pressed);
+    }
     float alpha = open ? 0.98f : (hovered ? 0.9f : 0.85f);
-
-    renderer_draw_ui_rect(renderer, x, y, width, height, base, base * 0.85f, base * 0.7f, alpha);
+    if (hovered && !open && !pressed) {
+        float mix = settings_hover_mix();
+        alpha += (1.0f - alpha) * (mix * 0.4f);
+        if (alpha > 1.0f) {
+            alpha = 1.0f;
+        }
+    }
+    renderer_draw_ui_rect(renderer, x, y, width, height, r, g, b, alpha);
     renderer_draw_ui_text(renderer, x + 18.0f, y + height * 0.5f - 8.0f, label, 0.96f, 0.96f, 0.98f, 0.96f);
 
     float value_x = x + width - 18.0f - (float)strlen(value) * 8.0f;
@@ -366,11 +511,32 @@ static bool settings_slider(SettingsMenuState *state,
                           0.9f,
                           0.92f);
 
-    renderer_draw_ui_rect(renderer, slider_x, slider_y, slider_width, slider_height, 0.12f, 0.12f, 0.18f, 0.85f);
-    renderer_draw_ui_rect(renderer, slider_x, slider_y, slider_width * t, slider_height, 0.32f, 0.38f, 0.62f, 0.92f);
+    float track_r = 0.12f;
+    float track_g = 0.12f;
+    float track_b = 0.18f;
+    if (hovered) {
+        float mix = settings_hover_mix();
+        track_r += (1.0f - track_r) * (mix * 0.25f);
+        track_g += (1.0f - track_g) * (mix * 0.25f);
+        track_b += (1.0f - track_b) * (mix * 0.15f);
+    }
+    renderer_draw_ui_rect(renderer, slider_x, slider_y, slider_width, slider_height, track_r, track_g, track_b, 0.88f);
+    renderer_draw_ui_rect(renderer, slider_x, slider_y, slider_width * t, slider_height, 0.32f, 0.38f, 0.62f, 0.94f);
 
     float handle_x = slider_x + slider_width * t - 6.0f;
-    renderer_draw_ui_rect(renderer, handle_x, slider_y - 2.0f, 12.0f, slider_height + 4.0f, hovered ? 0.85f : 0.75f, 0.82f, 0.95f, hovered ? 0.96f : 0.88f);
+    float handle_r = hovered ? 0.85f : 0.75f;
+    float handle_g = 0.82f;
+    float handle_b = 0.95f;
+    settings_apply_interaction_tint(&handle_r, &handle_g, &handle_b, hovered, active);
+    float handle_alpha = hovered ? 0.96f : 0.9f;
+    if (hovered && !active) {
+        float mix = settings_hover_mix();
+        handle_alpha += (1.0f - handle_alpha) * (mix * 0.4f);
+        if (handle_alpha > 1.0f) {
+            handle_alpha = 1.0f;
+        }
+    }
+    renderer_draw_ui_rect(renderer, handle_x, slider_y - 2.0f, 12.0f, slider_height + 4.0f, handle_r, handle_g, handle_b, handle_alpha);
 
     if (!input || blocked) {
         return false;
@@ -758,15 +924,36 @@ static void render_graphics_tab(SettingsMenuState *state,
         for (int i = 0; i < (int)PLATFORM_WINDOW_MODE_COUNT; ++i) {
             float item_y = list_y + option_height * (float)i;
             bool hovered = input && point_in_rect(mx, my, list_x, item_y, list_w, option_height);
+            bool pressed = hovered && input && input->mouse_left_pressed;
             bool selected = state->graphics_mode == (PlatformWindowMode)i;
-            float base = selected ? 0.32f : 0.20f;
-            if (hovered) {
-                base += 0.08f;
+            float base = selected ? 0.32f : 0.18f;
+            float r = base;
+            float g = base * 0.85f;
+            float b = base * 0.7f;
+            settings_apply_interaction_tint(&r, &g, &b, hovered, pressed);
+            if (selected) {
+                if (r < 0.32f) {
+                    r = 0.32f;
+                }
+                if (g < 0.28f) {
+                    g = 0.28f;
+                }
+                if (b < 0.24f) {
+                    b = 0.24f;
+                }
             }
-            renderer_draw_ui_rect(renderer, list_x + 2.0f, item_y + 2.0f, list_w - 4.0f, option_height - 4.0f, base, base * 0.85f, base * 0.7f, 0.95f);
+            float option_alpha = selected ? 0.98f : 0.92f;
+            if (hovered && !pressed) {
+                float mix = settings_hover_mix();
+                option_alpha += (1.0f - option_alpha) * (mix * 0.4f);
+                if (option_alpha > 1.0f) {
+                    option_alpha = 1.0f;
+                }
+            }
+            renderer_draw_ui_rect(renderer, list_x + 2.0f, item_y + 2.0f, list_w - 4.0f, option_height - 4.0f, r, g, b, option_alpha);
             renderer_draw_ui_text(renderer, list_x + 18.0f, item_y + option_height * 0.5f - 8.0f, mode_names[i], 0.95f, 0.95f, 0.98f, 0.96f);
 
-            if (hovered && input && input->mouse_left_pressed) {
+            if (pressed) {
                 state->graphics_mode = (PlatformWindowMode)i;
                 state->graphics_mode_dropdown_open = false;
                 if (result) {
@@ -803,12 +990,44 @@ static void render_graphics_tab(SettingsMenuState *state,
 
     row_y += row_height + 12.0f;
     if (resolutions && resolution_count > 0) {
+        uint32_t context_width = (context && context->resolution_width) ? *context->resolution_width : 0U;
+        uint32_t context_height = (context && context->resolution_height) ? *context->resolution_height : 0U;
+        bool context_matches_any = false;
+
+        if (context_width > 0U && context_height > 0U) {
+            size_t match = settings_find_resolution_index(resolutions,
+                                                          resolution_count,
+                                                          context_width,
+                                                          context_height);
+            if (match < resolution_count &&
+                resolutions[match].width == context_width &&
+                resolutions[match].height == context_height) {
+                state->graphics_resolution_index = match;
+                context_matches_any = true;
+            }
+        }
+
         if (state->graphics_resolution_index >= resolution_count) {
             state->graphics_resolution_index = resolution_count - 1;
         }
 
         const PreferencesResolution *current = &resolutions[state->graphics_resolution_index];
-        const char *resolution_label = current && current->label ? current->label : "Custom";
+        char fallback_label[64] = {0};
+        const char *resolution_label = NULL;
+        bool matches_context = context_matches_any &&
+                               current &&
+                               current->width == context_width &&
+                               current->height == context_height;
+        if (matches_context && current->label) {
+            resolution_label = current->label;
+        } else if (context_width > 0U && context_height > 0U) {
+            settings_format_resolution(fallback_label, sizeof(fallback_label), context_width, context_height);
+            resolution_label = fallback_label[0] != '\0' ? fallback_label : "Custom";
+        } else if (current && current->label) {
+            resolution_label = current->label;
+        } else {
+            resolution_label = "Custom";
+        }
 
         size_t visible_capacity = resolution_count < 8 ? resolution_count : 8;
         if (visible_capacity > max_visible_rows) {
@@ -929,12 +1148,35 @@ static void render_graphics_tab(SettingsMenuState *state,
                 const PreferencesResolution *entry = &resolutions[idx];
                 float item_y = list_y + option_height * (float)i;
                 bool hovered = point_in_rect(mx, my, list_x, item_y, options_w, option_height);
-                bool selected = idx == state->graphics_resolution_index;
-                float base = selected ? 0.32f : 0.20f;
-                if (hovered) {
-                    base += 0.08f;
+                bool pressed = hovered && input && input->mouse_left_pressed;
+                bool selected = context_matches_any &&
+                                 entry->width == context_width &&
+                                 entry->height == context_height;
+                float base = selected ? 0.32f : 0.18f;
+                float r = base;
+                float g = base * 0.85f;
+                float b = base * 0.7f;
+                settings_apply_interaction_tint(&r, &g, &b, hovered, pressed);
+                if (selected) {
+                    if (r < 0.32f) {
+                        r = 0.32f;
+                    }
+                    if (g < 0.28f) {
+                        g = 0.28f;
+                    }
+                    if (b < 0.24f) {
+                        b = 0.24f;
+                    }
                 }
-                renderer_draw_ui_rect(renderer, list_x + 2.0f, item_y + 2.0f, options_w - 4.0f, option_height - 4.0f, base, base * 0.85f, base * 0.7f, 0.95f);
+                float option_alpha = selected ? 0.98f : 0.92f;
+                if (hovered && !pressed) {
+                    float mix = settings_hover_mix();
+                    option_alpha += (1.0f - option_alpha) * (mix * 0.4f);
+                    if (option_alpha > 1.0f) {
+                        option_alpha = 1.0f;
+                    }
+                }
+                renderer_draw_ui_rect(renderer, list_x + 2.0f, item_y + 2.0f, options_w - 4.0f, option_height - 4.0f, r, g, b, option_alpha);
                 renderer_draw_ui_text(renderer,
                                       list_x + 18.0f,
                                       item_y + option_height * 0.5f - 8.0f,
@@ -944,7 +1186,7 @@ static void render_graphics_tab(SettingsMenuState *state,
                                       0.98f,
                                       0.96f);
 
-                if (hovered && input && input->mouse_left_pressed) {
+                if (pressed) {
                     state->graphics_resolution_index = idx;
                     state->graphics_resolution_dropdown_open = false;
                     if (context && context->resolution_width && context->resolution_height) {
@@ -1002,6 +1244,8 @@ static void settings_render_audio_dropdown(Renderer *renderer,
     if (!renderer || !state) {
         return;
     }
+
+    (void)result;
 
     const float list_x = header_x;
     const float list_y = header_y + dropdown_height;
@@ -1085,17 +1329,34 @@ static void settings_render_audio_dropdown(Renderer *renderer,
         const AudioDeviceInfo *entry = &devices[idx];
         float item_y = list_y + item_height * (float)i;
         bool hovered = point_in_rect(mx, my, list_x, item_y, options_w, item_height);
+        bool pressed = hovered && input && input->mouse_left_pressed;
         bool selected = idx == *selected_index;
-        float base = selected ? 0.32f : 0.20f;
-        if (hovered) base += 0.08f;
+        float base = selected ? 0.32f : 0.18f;
+        float r = base;
+        float g = base * 0.85f;
+        float b = base * 0.7f;
+        settings_apply_interaction_tint(&r, &g, &b, hovered, pressed);
+        if (selected) {
+            if (r < 0.32f) r = 0.32f;
+            if (g < 0.28f) g = 0.28f;
+            if (b < 0.24f) b = 0.24f;
+        }
+        float option_alpha = selected ? 0.98f : 0.92f;
+        if (hovered && !pressed) {
+            float mix = settings_hover_mix();
+            option_alpha += (1.0f - option_alpha) * (mix * 0.4f);
+            if (option_alpha > 1.0f) {
+                option_alpha = 1.0f;
+            }
+        }
 
         renderer_draw_ui_rect(renderer, list_x + 2.0f, item_y + 2.0f, options_w - 4.0f, item_height - 4.0f,
-                              base, base * 0.85f, base * 0.7f, 0.95f);
+                              r, g, b, option_alpha);
         renderer_draw_ui_text(renderer, list_x + 18.0f, item_y + item_height * 0.5f - 8.0f,
                               entry->name ? entry->name : "Unknown Device",
                               0.95f, 0.95f, 0.98f, 0.96f);
 
-        if (hovered && input && input->mouse_left_pressed) {
+        if (pressed) {
             /* Sélection */
             *selected_index = idx;
 
@@ -1670,7 +1931,8 @@ static void render_accessibility_tab(SettingsMenuState *state,
 SettingsMenuResult settings_menu_render(SettingsMenuState *state,
                                         const SettingsMenuContext *context,
                                         Renderer *renderer,
-                                        const InputState *input)
+                                        const InputState *input,
+                                        double time_seconds)
 {
     SettingsMenuResult result;
     memset(&result, 0, sizeof(result));
@@ -1678,6 +1940,8 @@ SettingsMenuResult settings_menu_render(SettingsMenuState *state,
     if (!state || !renderer) {
         return result;
     }
+
+    g_settings_ui_time = time_seconds;
 
     SettingsMenuContext empty_context = {0};
     if (!context) {

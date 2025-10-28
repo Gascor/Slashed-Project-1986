@@ -4,6 +4,7 @@
 #include "engine/hud.h"
 #include "engine/network.h"
 #include "engine/player.h"
+#include "engine/preferences.h"
 #include "engine/server_browser.h"
 #include "engine/settings_menu.h"
 #include "engine/weapons.h"
@@ -24,6 +25,9 @@
 #ifndef M_PI_2
 #    define M_PI_2 (M_PI / 2.0)
 #endif
+
+#define GAME_VOICE_CAPTURE_SAMPLES 480U
+#define GAME_VOICE_DEFAULT_SAMPLE_RATE 16000U
 
 struct GameState {
     Renderer *renderer;
@@ -72,6 +76,9 @@ struct GameState {
     char objective_text[64];
     char hud_notification[96];
     float hud_notification_timer;
+    int16_t voice_capture_buffer[NETWORK_VOICE_MAX_DATA / sizeof(int16_t)];
+    size_t voice_capture_sample_count;
+    bool voice_capture_available;
 };
 
 static GameConfig game_default_config(void)
@@ -702,6 +709,126 @@ static void game_process_voice_packets(GameState *game)
     }
 }
 
+static void game_update_voice_chat(GameState *game, float dt)
+{
+    (void)dt;
+    if (!game || !game->network) {
+        return;
+    }
+
+    const NetworkClientStats *stats = network_client_stats(game->network);
+    if (!stats || !stats->connected) {
+        return;
+    }
+
+    if (!audio_microphone_active()) {
+        bool started = audio_microphone_start();
+        game->voice_capture_available = started;
+        game->voice_capture_sample_count = 0U;
+        if (!started) {
+            return;
+        }
+    } else {
+        game->voice_capture_available = true;
+    }
+
+    if (!game->voice_capture_available) {
+        return;
+    }
+
+    const EnginePreferences *prefs = preferences_get();
+    PreferencesVoiceActivationMode voice_mode =
+        prefs ? prefs->voice_activation_mode : PREFERENCES_VOICE_PUSH_TO_TALK;
+    float threshold_db = prefs ? prefs->voice_activation_threshold_db : -45.0f;
+    if (threshold_db > 0.0f) {
+        threshold_db = 0.0f;
+    }
+    if (threshold_db < -120.0f) {
+        threshold_db = -120.0f;
+    }
+    float threshold_linear = powf(10.0f, threshold_db / 20.0f);
+
+    bool push_to_talk_active = game->last_input.voice_talk_down;
+
+    const size_t temp_capacity = NETWORK_VOICE_MAX_DATA / sizeof(int16_t);
+    int16_t temp_buffer[NETWORK_VOICE_MAX_DATA / sizeof(int16_t)];
+
+    size_t read_samples;
+    bool block_network = game->paused && game->options_open;
+    while ((read_samples = audio_microphone_read(temp_buffer, temp_capacity)) > 0U) {
+        size_t offset = 0U;
+        while (offset < read_samples) {
+            size_t remaining = read_samples - offset;
+            size_t needed = GAME_VOICE_CAPTURE_SAMPLES > game->voice_capture_sample_count
+                                ? (GAME_VOICE_CAPTURE_SAMPLES - game->voice_capture_sample_count)
+                                : GAME_VOICE_CAPTURE_SAMPLES;
+            if (needed == 0U) {
+                needed = GAME_VOICE_CAPTURE_SAMPLES;
+                game->voice_capture_sample_count = 0U;
+            }
+
+            size_t to_copy = remaining < needed ? remaining : needed;
+            memcpy(game->voice_capture_buffer + game->voice_capture_sample_count,
+                   temp_buffer + offset,
+                   to_copy * sizeof(int16_t));
+            game->voice_capture_sample_count += to_copy;
+            offset += to_copy;
+
+            if (game->voice_capture_sample_count >= GAME_VOICE_CAPTURE_SAMPLES) {
+                float sum = 0.0f;
+                for (size_t i = 0; i < GAME_VOICE_CAPTURE_SAMPLES; ++i) {
+                    float sample = (float)game->voice_capture_buffer[i] / 32768.0f;
+                    sum += sample * sample;
+                }
+                float rms = sqrtf(sum / (float)GAME_VOICE_CAPTURE_SAMPLES);
+
+                bool transmit = false;
+                if (voice_mode == PREFERENCES_VOICE_PUSH_TO_TALK) {
+                    transmit = push_to_talk_active;
+                } else {
+                    transmit = rms >= threshold_linear;
+                }
+
+                if (transmit) {
+                    NetworkVoicePacket packet = {0};
+                    packet.codec = NETWORK_VOICE_CODEC_PCM16;
+                    packet.channels = audio_microphone_channels();
+                    if (packet.channels == 0U || packet.channels > NETWORK_VOICE_MAX_CHANNELS) {
+                        packet.channels = 1U;
+                    }
+
+                    packet.sample_rate = audio_microphone_sample_rate();
+                    if (packet.sample_rate == 0U) {
+                        packet.sample_rate = GAME_VOICE_DEFAULT_SAMPLE_RATE;
+                    }
+
+                    size_t total_samples = GAME_VOICE_CAPTURE_SAMPLES;
+                    size_t frames = packet.channels > 0U ? (total_samples / packet.channels) : total_samples;
+                    if (frames == 0U) {
+                        frames = total_samples;
+                    }
+                    packet.frame_count = (uint16_t)frames;
+                    packet.volume = 1.0f;
+
+                    size_t byte_count = total_samples * sizeof(int16_t);
+                    if (byte_count > sizeof(packet.data)) {
+                        byte_count = sizeof(packet.data);
+                    }
+
+                    memcpy(packet.data, game->voice_capture_buffer, byte_count);
+                    packet.data_size = byte_count;
+
+                    if (!block_network) {
+                        (void)network_client_send_voice_packet(game->network, &packet);
+                    }
+                }
+
+                game->voice_capture_sample_count = 0U;
+            }
+        }
+    }
+}
+
 static void game_synchronize_remote_players(GameState *game)
 {
     if (!game || !game->network) {
@@ -771,6 +898,9 @@ static void game_update_network(GameState *game, float dt)
     if (!stats->connected) {
         game_clear_remote_entities(game);
         audio_voice_stop_all();
+        audio_microphone_stop();
+        game->voice_capture_sample_count = 0U;
+        game->voice_capture_available = false;
         return;
     }
 
@@ -782,6 +912,7 @@ static void game_update_network(GameState *game, float dt)
     (void)network_client_send_player_state(game->network, &player_state);
 
     game_synchronize_remote_players(game);
+    game_update_voice_chat(game, dt);
     game_process_voice_packets(game);
     game_process_weapon_events(game);
 }
@@ -886,6 +1017,7 @@ void game_destroy(GameState *game)
     }
 
     audio_voice_stop_all();
+    audio_microphone_stop();
 
     if (game->network) {
         network_client_destroy(game->network);
@@ -1128,7 +1260,8 @@ static void game_draw_pause_menu(GameState *game)
         SettingsMenuResult menu_result = settings_menu_render(&game->settings_menu,
                                                               &context,
                                                               renderer,
-                                                              &game->last_input);
+                                                              &game->last_input,
+                                                              game->time_seconds);
 
         if (menu_result.view_bobbing_changed) {
             game_notify(game, game->config.enable_view_bobbing ? "View bobbing enabled" : "View bobbing disabled");

@@ -66,8 +66,9 @@ target_include_directories(sp1986 PRIVATE "${ENGINE_INCLUDE_DIR}")
 target_link_libraries(sp1986 PRIVATE engine)
 
 if (WIN32)
-    target_link_libraries(engine PRIVATE enet::enet ws2_32 winmm)
-    target_link_libraries(sp1986 PRIVATE opengl32 user32 gdi32 winmm)
+    target_link_libraries(engine PRIVATE enet::enet ws2_32 winmm ole32 oleaut32 avrt)
+    target_link_libraries(engine PUBLIC windowscodecs)
+    target_link_libraries(sp1986 PRIVATE opengl32 user32 gdi32 winmm ole32 oleaut32 avrt)
 else()
     target_link_libraries(engine PRIVATE enet::enet m)
 endif()
@@ -123,3 +124,6 @@ if (SP1986_BUILD_MASTER)
         target_compile_options(master_server PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()
+
+
+

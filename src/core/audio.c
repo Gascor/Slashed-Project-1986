@@ -1,49 +1,34 @@
 #include "engine/audio.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #if defined(_WIN32)
+#    ifndef COBJMACROS
+#        define COBJMACROS
+#    endif
 #    define WIN32_LEAN_AND_MEAN
 #    include <windows.h>
+#    include <unknwn.h>
+#    include <mmdeviceapi.h>
+#    include <audioclient.h>
+#    include <functiondiscoverykeys_devpkey.h>
+#    include <avrt.h>
 #    include <mmsystem.h>
 #    include <mmreg.h>
+#    include <ksmedia.h>
 #    include <io.h>
+#    include <initguid.h>
 #endif
 
+#define VOICE_TARGET_RATE 16000U
+#define VOICE_CHANNELS    1U
+#define VOICE_QUEUE_LIMIT 64U
+#define VOICE_RING_FRAMES (VOICE_TARGET_RATE * 4U)
 #define AUDIO_ALIAS_MUSIC "bgm_music"
-#define AUDIO_MAX_STREAMS 32
 #define AUDIO_MAX_PATH    512
-
-typedef enum AudioStreamType {
-    AUDIO_STREAM_VOICE = 0,
-    AUDIO_STREAM_EFFECT = 1
-} AudioStreamType;
-
-#if defined(_WIN32)
-
-typedef struct AudioStreamBuffer {
-    WAVEHDR header;
-    uint8_t *data;
-    struct AudioStreamBuffer *next;
-} AudioStreamBuffer;
-
-typedef struct AudioStream {
-    HWAVEOUT handle;
-    AudioStreamBuffer *head;
-    AudioStreamBuffer *tail;
-    WAVEFORMATEX format;
-    uint8_t id;
-    AudioStreamType type;
-    float volume;
-    uint32_t buffer_count;
-    LONG closing;
-    int active;
-    int auto_close;
-} AudioStream;
-
-#endif
 
 typedef struct AudioState {
     float master_volume;
@@ -51,22 +36,35 @@ typedef struct AudioState {
     float effects_volume;
     float voice_volume;
     float microphone_volume;
-    char music_track[AUDIO_MAX_PATH];
+    int initialized;
     int music_configured;
     int music_playing;
     int music_loop;
-    int initialized;
-    uint8_t next_effect_id;
-    uint32_t output_device_id;
-    uint32_t input_device_id;
+    char music_track[AUDIO_MAX_PATH];
+    uint32_t output_device_token;
+    uint32_t input_device_token;
 #if defined(_WIN32)
-    AudioStream streams[AUDIO_MAX_STREAMS];
-    CRITICAL_SECTION stream_lock;
-    int stream_lock_initialized;
+    IMMDeviceEnumerator *device_enumerator;
 #endif
 } AudioState;
 
-static AudioState g_audio = {0};
+static AudioState g_audio = {
+    .master_volume = 1.0f,
+    .music_volume = 1.0f,
+    .effects_volume = 1.0f,
+    .voice_volume = 1.0f,
+    .microphone_volume = 1.0f,
+    .initialized = 0,
+    .music_configured = 0,
+    .music_playing = 0,
+    .music_loop = 0,
+    .music_track = {0},
+    .output_device_token = UINT32_MAX,
+    .input_device_token = UINT32_MAX,
+#if defined(_WIN32)
+    .device_enumerator = NULL
+#endif
+};
 
 static float audio_clamp(float value, float min_value, float max_value)
 {
@@ -79,574 +77,1078 @@ static float audio_clamp(float value, float min_value, float max_value)
     return value;
 }
 
-#if defined(_WIN32)
-
-static void audio_copy_string(char *dst, size_t dst_size, const char *src)
+static void audio_log(const char *message)
 {
-    if (!dst || dst_size == 0U) {
-        return;
-    }
-
-    if (!src) {
-        dst[0] = '\0';
-        return;
-    }
-
-    size_t len = strlen(src);
-    if (len >= dst_size) {
-        len = dst_size - 1U;
-    }
-    memcpy(dst, src, len);
-    dst[len] = '\0';
+    fprintf(stderr, "[audio] %s\n", message);
 }
 
-static void audio_log_mci_error(MCIERROR err, const char *context)
-{
-    if (!err) {
-        return;
-    }
+#if defined(_WIN32)
 
-    char buffer[256];
-    if (mciGetErrorStringA(err, buffer, sizeof(buffer))) {
-        fprintf(stderr, "[audio] %s failed: %s\n", context, buffer);
-    } else {
-        fprintf(stderr, "[audio] %s failed: MCI error %lu\n", context, (unsigned long)err);
-    }
+DEFINE_GUID(CLSID_MMDeviceEnumerator,
+            0xbcde0395,
+            0xe52f,
+            0x467c,
+            0x8e,
+            0x3d,
+            0xc4,
+            0x57,
+            0x92,
+            0x91,
+            0x69,
+            0x2e);
+
+DEFINE_GUID(IID_IMMDeviceEnumerator,
+            0xa95664d2,
+            0x9614,
+            0x4f35,
+            0xa7,
+            0x46,
+            0xde,
+            0x8d,
+            0xb6,
+            0x36,
+            0x17,
+            0xe6);
+
+DEFINE_GUID(IID_IAudioClient,
+            0x1cb9ad4c,
+            0xdbfa,
+            0x4c32,
+            0xb1,
+            0x78,
+            0xc2,
+            0xf5,
+            0x68,
+            0xa7,
+            0x03,
+            0xb2);
+
+DEFINE_GUID(IID_IAudioRenderClient,
+            0xf294acfc,
+            0x3146,
+            0x4483,
+            0xa7,
+            0xbf,
+            0xad,
+            0xdc,
+            0xa7,
+            0xc2,
+            0x60,
+            0xe2);
+
+DEFINE_GUID(IID_IAudioCaptureClient,
+            0xc8adbd64,
+            0xe71e,
+            0x48a0,
+            0xa4,
+            0xde,
+            0x18,
+            0x5c,
+            0x39,
+            0x5c,
+            0xd3,
+            0x17);
+
+DEFINE_GUID(KSDATAFORMAT_SUBTYPE_IEEE_FLOAT,
+            0x00000003,
+            0x0000,
+            0x0010,
+            0x80,
+            0x00,
+            0x00,
+            0xaa,
+            0x00,
+            0x38,
+            0x9b,
+            0x71);
+
+#ifndef SAFE_RELEASE
+#define SAFE_RELEASE(x)                                                       \
+    do {                                                                      \
+        if ((x) != NULL) {                                                    \
+            IUnknown_Release((IUnknown *)(x));                                \
+            (x) = NULL;                                                       \
+        }                                                                     \
+    } while (0)
+#endif
+
+static void audio_log_hresult(const char *context, HRESULT hr)
+{
+    fprintf(stderr, "[audio] %s failed (HRESULT=0x%08lX)\n", context, (long)hr);
 }
 
 static bool audio_mci_command(const char *command, const char *context)
 {
     MCIERROR err = mciSendStringA(command, NULL, 0, NULL);
     if (err != 0U) {
-        audio_log_mci_error(err, context);
+        char buffer[256] = {0};
+        if (mciGetErrorStringA(err, buffer, sizeof(buffer))) {
+            fprintf(stderr, "[audio] %s failed: %s\n", context, buffer);
+        } else {
+            fprintf(stderr, "[audio] %s failed: MCI error %lu\n", context, (unsigned long)err);
+        }
         return false;
     }
     return true;
 }
 
-static void audio_stream_detach_buffer(AudioStream *stream, AudioStreamBuffer *buffer)
-{
-    if (!stream || !buffer) {
-        return;
-    }
+typedef struct VoiceRenderBuffer {
+    float *samples;
+    size_t frame_count;
+    size_t cursor;
+    struct VoiceRenderBuffer *next;
+} VoiceRenderBuffer;
 
-    AudioStreamBuffer *prev = NULL;
-    AudioStreamBuffer *node = stream->head;
-    while (node) {
-        if (node == buffer) {
-            if (prev) {
-                prev->next = node->next;
-            } else {
-                stream->head = node->next;
-            }
-            if (stream->tail == buffer) {
-                stream->tail = prev;
-            }
-            if (stream->buffer_count > 0U) {
-                --stream->buffer_count;
-            }
-            break;
-        }
-        prev = node;
-        node = node->next;
+typedef struct VoicePlaybackContext {
+    IMMDevice *device;
+    IAudioClient *client;
+    IAudioRenderClient *render;
+    HANDLE event;
+    HANDLE thread;
+    CRITICAL_SECTION lock;
+    VoiceRenderBuffer *head;
+    VoiceRenderBuffer *tail;
+    WAVEFORMATEX *format;
+    UINT32 buffer_frames;
+    float *mix_buffer;
+    LONG running;
+    int lock_initialized;
+} VoicePlaybackContext;
+
+typedef struct VoiceCaptureContext {
+    IMMDevice *device;
+    IAudioClient *client;
+    IAudioCaptureClient *capture;
+    HANDLE event;
+    HANDLE thread;
+    CRITICAL_SECTION lock;
+    int16_t *ring;
+    size_t ring_capacity;
+    size_t ring_write;
+    size_t ring_read;
+    float level_linear;
+    float level_db;
+    WAVEFORMATEX *format;
+    LONG running;
+    int lock_initialized;
+} VoiceCaptureContext;
+
+static VoicePlaybackContext g_voice_playback = {0};
+static VoiceCaptureContext g_voice_capture = {0};
+
+static BOOL audio_format_is_float(const WAVEFORMATEX *fmt)
+{
+    if (!fmt) {
+        return FALSE;
     }
+    if (fmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) {
+        return TRUE;
+    }
+    if (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+        const WAVEFORMATEXTENSIBLE *ext = (const WAVEFORMATEXTENSIBLE *)fmt;
+        return IsEqualGUID(&ext->SubFormat, &KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
+    }
+    return FALSE;
 }
 
-static void CALLBACK audio_waveout_callback(HWAVEOUT device, UINT msg, DWORD_PTR instance, DWORD_PTR param1, DWORD_PTR param2)
+static UINT32 audio_format_bytes_per_sample(const WAVEFORMATEX *fmt)
 {
-    (void)param2;
-    if (msg != WOM_DONE || !instance || !param1) {
-        return;
-    }
-
-    AudioStream *stream = (AudioStream *)instance;
-    WAVEHDR *header = (WAVEHDR *)param1;
-    AudioStreamBuffer *buffer = (AudioStreamBuffer *)header->dwUser;
-    if (!stream || !buffer) {
-        return;
-    }
-
-    waveOutUnprepareHeader(device, header, sizeof(WAVEHDR));
-
-    if (g_audio.stream_lock_initialized) {
-        EnterCriticalSection(&g_audio.stream_lock);
-        audio_stream_detach_buffer(stream, buffer);
-        int empty = stream->head == NULL;
-        LeaveCriticalSection(&g_audio.stream_lock);
-
-        free(buffer->data);
-        free(buffer);
-
-        if (stream->auto_close && empty && stream->handle && InterlockedCompareExchange(&stream->closing, 1, 0) == 0) {
-            waveOutClose(stream->handle);
-            stream->handle = NULL;
-
-            EnterCriticalSection(&g_audio.stream_lock);
-            stream->head = NULL;
-            stream->tail = NULL;
-            stream->buffer_count = 0;
-            stream->active = 0;
-            stream->auto_close = 0;
-            stream->volume = 1.0f;
-            stream->id = 0;
-            memset(&stream->format, 0, sizeof(WAVEFORMATEX));
-            LeaveCriticalSection(&g_audio.stream_lock);
-
-            InterlockedExchange(&stream->closing, 0);
-        }
-    } else {
-        free(buffer->data);
-        free(buffer);
-    }
-    (void)device;
+    return fmt ? (fmt->wBitsPerSample / 8U) : 0U;
 }
 
-static AudioStream *audio_stream_find(AudioStreamType type, uint8_t id)
+static size_t audio_format_byte_size(const WAVEFORMATEX *fmt)
 {
-    for (size_t i = 0; i < AUDIO_MAX_STREAMS; ++i) {
-        AudioStream *stream = &g_audio.streams[i];
-        if (stream->active && stream->type == type && stream->id == id) {
-            return stream;
-        }
+    if (!fmt) {
+        return 0U;
     }
-    return NULL;
+    size_t size = sizeof(WAVEFORMATEX);
+    if (fmt->cbSize > 0U || fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+        size += fmt->cbSize;
+    }
+    return size;
 }
 
-static int audio_stream_format_matches(const AudioStream *stream, const WAVEFORMATEX *fmt)
+static WAVEFORMATEX *audio_clone_format(const WAVEFORMATEX *fmt)
 {
-    if (!stream || !fmt) {
+    size_t size = audio_format_byte_size(fmt);
+    if (size == 0U) {
+        return NULL;
+    }
+    WAVEFORMATEX *copy = (WAVEFORMATEX *)CoTaskMemAlloc(size);
+    if (!copy) {
+        return NULL;
+    }
+    memcpy(copy, fmt, size);
+    return copy;
+}
+
+static IMMDevice *audio_get_endpoint(uint32_t token, EDataFlow flow)
+{
+    if (!g_audio.device_enumerator) {
+        return NULL;
+    }
+
+    IMMDevice *device = NULL;
+    if (token == UINT32_MAX) {
+        HRESULT hr = IMMDeviceEnumerator_GetDefaultAudioEndpoint(g_audio.device_enumerator, flow, eConsole, &device);
+        if (FAILED(hr)) {
+            audio_log_hresult("GetDefaultAudioEndpoint", hr);
+            return NULL;
+        }
+        return device;
+    }
+
+    IMMDeviceCollection *collection = NULL;
+    HRESULT hr = IMMDeviceEnumerator_EnumAudioEndpoints(g_audio.device_enumerator, flow, DEVICE_STATE_ACTIVE, &collection);
+    if (FAILED(hr)) {
+        audio_log_hresult("EnumAudioEndpoints", hr);
+        return NULL;
+    }
+
+    UINT32 count = 0;
+    IMMDeviceCollection_GetCount(collection, &count);
+    if (token >= count) {
+        SAFE_RELEASE(collection);
+        return NULL;
+    }
+
+    hr = IMMDeviceCollection_Item(collection, token, &device);
+    if (FAILED(hr)) {
+        audio_log_hresult("IMMDeviceCollection::Item", hr);
+        device = NULL;
+    }
+
+    SAFE_RELEASE(collection);
+    return device;
+}
+
+static size_t audio_enumerate_wasapi_devices(EDataFlow flow, AudioDeviceInfo *out_devices, size_t max_devices)
+{
+    if (!g_audio.device_enumerator) {
         return 0;
     }
 
-    return stream->format.wFormatTag == fmt->wFormatTag &&
-           stream->format.nChannels == fmt->nChannels &&
-           stream->format.nSamplesPerSec == fmt->nSamplesPerSec &&
-           stream->format.wBitsPerSample == fmt->wBitsPerSample;
-}
+    size_t index = 0;
+    if (out_devices && max_devices > 0U) {
+        AudioDeviceInfo *info = &out_devices[index++];
+        info->id = UINT32_MAX;
+        info->is_default = true;
+        info->is_input = (flow == eCapture);
+        snprintf(info->name, sizeof(info->name), "System Default %s", info->is_input ? "Input" : "Output");
+    }
 
-static AudioStream *audio_stream_allocate(void)
-{
-    for (size_t i = 0; i < AUDIO_MAX_STREAMS; ++i) {
-        AudioStream *stream = &g_audio.streams[i];
-        if (!stream->active && stream->handle == NULL && stream->buffer_count == 0U) {
-            memset(stream, 0, sizeof(*stream));
-            stream->volume = 1.0f;
-            return stream;
+    IMMDeviceCollection *collection = NULL;
+    HRESULT hr = IMMDeviceEnumerator_EnumAudioEndpoints(g_audio.device_enumerator, flow, DEVICE_STATE_ACTIVE, &collection);
+    if (FAILED(hr)) {
+        audio_log_hresult("EnumAudioEndpoints", hr);
+        return index;
+    }
+
+    UINT32 endpoint_count = 0;
+    IMMDeviceCollection_GetCount(collection, &endpoint_count);
+    for (UINT32 i = 0; i < endpoint_count; ++i) {
+        IMMDevice *device = NULL;
+        if (FAILED(IMMDeviceCollection_Item(collection, i, &device))) {
+            continue;
         }
+
+        IPropertyStore *props = NULL;
+        if (SUCCEEDED(IMMDevice_OpenPropertyStore(device, STGM_READ, &props))) {
+            PROPVARIANT name;
+            PropVariantInit(&name);
+            if (SUCCEEDED(IPropertyStore_GetValue(props, &PKEY_Device_FriendlyName, &name))) {
+                if (out_devices && index < max_devices) {
+                    AudioDeviceInfo *info = &out_devices[index];
+                    info->id = i;
+                    info->is_default = false;
+                    info->is_input = (flow == eCapture);
+                    if (name.vt == VT_LPWSTR && name.pwszVal) {
+                        wcstombs(info->name, name.pwszVal, sizeof(info->name) - 1U);
+                        info->name[sizeof(info->name) - 1U] = '\0';
+                    } else {
+                        snprintf(info->name, sizeof(info->name), "Device %u", i + 1U);
+                    }
+                }
+                ++index;
+            }
+            PropVariantClear(&name);
+            SAFE_RELEASE(props);
+        }
+
+        SAFE_RELEASE(device);
     }
-    return NULL;
+
+    SAFE_RELEASE(collection);
+    return index;
 }
 
-static MMRESULT audio_stream_open(AudioStream *stream, const WAVEFORMATEX *fmt, int auto_close)
+static void voice_render_queue_clear(void)
 {
-    if (!stream || !fmt) {
-        return MMSYSERR_INVALPARAM;
-    }
-
-    stream->closing = 0;
-    UINT device_id = (g_audio.output_device_id == UINT32_MAX) ? WAVE_MAPPER : (UINT)g_audio.output_device_id;
-    MMRESULT result = waveOutOpen(&stream->handle,
-                                  device_id,
-                                  fmt,
-                                  (DWORD_PTR)audio_waveout_callback,
-                                  (DWORD_PTR)stream,
-                                  CALLBACK_FUNCTION);
-
-    if (result == MMSYSERR_NOERROR) {
-        stream->format = *fmt;
-        stream->head = NULL;
-        stream->tail = NULL;
-        stream->buffer_count = 0U;
-        stream->volume = 1.0f;
-        stream->auto_close = auto_close;
-        stream->active = 1;
-    }
-
-    return result;
-}
-
-static void audio_stream_close(AudioStream *stream)
-{
-    if (!stream || !stream->handle) {
+    if (!g_voice_playback.lock_initialized) {
+        g_voice_playback.head = NULL;
+        g_voice_playback.tail = NULL;
         return;
     }
 
-    InterlockedExchange(&stream->closing, 1);
-    waveOutReset(stream->handle);
-    waveOutClose(stream->handle);
-    stream->handle = NULL;
+    EnterCriticalSection(&g_voice_playback.lock);
+    VoiceRenderBuffer *node = g_voice_playback.head;
+    while (node) {
+        VoiceRenderBuffer *next = node->next;
+        free(node->samples);
+        free(node);
+        node = next;
+    }
+    g_voice_playback.head = g_voice_playback.tail = NULL;
+    LeaveCriticalSection(&g_voice_playback.lock);
+}
 
-    if (g_audio.stream_lock_initialized) {
-        EnterCriticalSection(&g_audio.stream_lock);
-        AudioStreamBuffer *node = stream->head;
-        while (node) {
-            AudioStreamBuffer *next = node->next;
-            free(node->data);
+static void voice_render_queue_push(VoiceRenderBuffer *buffer)
+{
+    if (!buffer) {
+        return;
+    }
+    if (!g_voice_playback.lock_initialized) {
+        free(buffer->samples);
+        free(buffer);
+        return;
+    }
+    EnterCriticalSection(&g_voice_playback.lock);
+    VoiceRenderBuffer *node = g_voice_playback.head;
+    size_t count = 0;
+    while (node) {
+        ++count;
+        node = node->next;
+    }
+    while (count >= VOICE_QUEUE_LIMIT && g_voice_playback.head) {
+        VoiceRenderBuffer *oldest = g_voice_playback.head;
+        g_voice_playback.head = oldest->next;
+        if (!g_voice_playback.head) {
+            g_voice_playback.tail = NULL;
+        }
+        free(oldest->samples);
+        free(oldest);
+        --count;
+    }
+    if (!g_voice_playback.head) {
+        g_voice_playback.head = g_voice_playback.tail = buffer;
+    } else {
+        g_voice_playback.tail->next = buffer;
+        g_voice_playback.tail = buffer;
+    }
+    LeaveCriticalSection(&g_voice_playback.lock);
+}
+
+static VoiceRenderBuffer *voice_render_queue_peek(void)
+{
+    if (!g_voice_playback.lock_initialized) {
+        return NULL;
+    }
+    return g_voice_playback.head;
+}
+
+static void voice_render_queue_pop(void)
+{
+    if (!g_voice_playback.lock_initialized) {
+        return;
+    }
+    VoiceRenderBuffer *node = g_voice_playback.head;
+    if (!node) {
+        return;
+    }
+    g_voice_playback.head = node->next;
+    if (!g_voice_playback.head) {
+        g_voice_playback.tail = NULL;
+    }
+    free(node->samples);
+    free(node);
+}
+
+static VoiceRenderBuffer *voice_create_buffer(const AudioVoiceFrame *frame, const WAVEFORMATEX *fmt)
+{
+    if (!frame || !frame->samples || frame->sample_count == 0U || !fmt) {
+        return NULL;
+    }
+
+    const uint32_t dst_rate = fmt->nSamplesPerSec;
+    const uint32_t src_rate = frame->sample_rate ? frame->sample_rate : dst_rate;
+    const uint8_t dst_channels = (uint8_t)fmt->nChannels;
+    const uint8_t src_channels = frame->channels ? frame->channels : 1U;
+
+    double ratio = (double)dst_rate / (double)src_rate;
+    size_t dst_frames = (size_t)((double)frame->sample_count * ratio) + 1U;
+    if (dst_frames == 0U) {
+        dst_frames = 1U;
+    }
+
+    VoiceRenderBuffer *buffer = (VoiceRenderBuffer *)calloc(1, sizeof(VoiceRenderBuffer));
+    if (!buffer) {
+        return NULL;
+    }
+    buffer->samples = (float *)calloc(dst_frames * dst_channels, sizeof(float));
+    if (!buffer->samples) {
+        free(buffer);
+        return NULL;
+    }
+
+    const float scale = audio_clamp(g_audio.master_volume, 0.0f, 1.0f) *
+                        audio_clamp(g_audio.voice_volume, 0.0f, 1.0f) /
+                        32768.0f;
+
+    double src_pos = 0.0;
+    for (size_t i = 0; i < dst_frames; ++i) {
+        size_t src_index = (size_t)src_pos;
+        if (src_index >= frame->sample_count) {
+            src_index = frame->sample_count - 1U;
+        }
+        size_t src_next = (src_index + 1U < frame->sample_count) ? (src_index + 1U) : src_index;
+        double frac = src_pos - (double)src_index;
+
+        for (uint8_t ch = 0; ch < dst_channels; ++ch) {
+            uint8_t src_ch = (ch < src_channels) ? ch : 0;
+            int16_t s0 = frame->samples[src_index * src_channels + src_ch];
+            int16_t s1 = frame->samples[src_next * src_channels + src_ch];
+            float interp = (float)s0 + (float)(s1 - s0) * (float)frac;
+            buffer->samples[i * dst_channels + ch] = interp * scale;
+        }
+
+        src_pos += 1.0 / ratio;
+    }
+
+    buffer->frame_count = dst_frames;
+    buffer->cursor = 0;
+    buffer->next = NULL;
+    return buffer;
+}
+
+static void voice_mix_output(BYTE *dest, UINT32 frames)
+{
+    if (!dest || !g_voice_playback.format || frames == 0U) {
+        return;
+    }
+    if (!g_voice_playback.lock_initialized) {
+        memset(dest, 0, (size_t)frames * g_voice_playback.format->nChannels * audio_format_bytes_per_sample(g_voice_playback.format));
+        return;
+    }
+
+    const UINT32 channels = g_voice_playback.format->nChannels;
+    const BOOL float_format = audio_format_is_float(g_voice_playback.format);
+    const UINT32 bytes_per_sample = audio_format_bytes_per_sample(g_voice_playback.format);
+    const size_t total_samples = (size_t)frames * (size_t)channels;
+
+    memset(g_voice_playback.mix_buffer, 0, total_samples * sizeof(float));
+
+    EnterCriticalSection(&g_voice_playback.lock);
+    VoiceRenderBuffer *node = g_voice_playback.head;
+    size_t frame_index = 0;
+    while (node && frame_index < frames) {
+        size_t available = node->frame_count - node->cursor;
+        size_t to_copy = available;
+        if (to_copy > (frames - frame_index)) {
+            to_copy = frames - frame_index;
+        }
+
+        for (size_t i = 0; i < to_copy; ++i) {
+            for (UINT32 ch = 0; ch < channels; ++ch) {
+                size_t dst = (frame_index + i) * channels + ch;
+                size_t src = (node->cursor + i) * channels + ch;
+                g_voice_playback.mix_buffer[dst] += node->samples[src];
+            }
+        }
+
+        node->cursor += to_copy;
+        frame_index += to_copy;
+        if (node->cursor >= node->frame_count) {
+            VoiceRenderBuffer *next = node->next;
+            free(node->samples);
             free(node);
             node = next;
-        }
-        stream->head = NULL;
-        stream->tail = NULL;
-        stream->buffer_count = 0U;
-        LeaveCriticalSection(&g_audio.stream_lock);
-    }
-
-    stream->active = 0;
-    stream->auto_close = 0;
-    stream->volume = 1.0f;
-    stream->id = 0;
-    memset(&stream->format, 0, sizeof(WAVEFORMATEX));
-    InterlockedExchange(&stream->closing, 0);
-}
-
-static void audio_close_all_streams(void)
-{
-    for (size_t i = 0; i < AUDIO_MAX_STREAMS; ++i) {
-        AudioStream *stream = &g_audio.streams[i];
-        if (stream->handle) {
-            audio_stream_close(stream);
+            g_voice_playback.head = node;
+            if (!node) {
+                g_voice_playback.tail = NULL;
+            }
+        } else {
+            break;
         }
     }
-}
-
-static AudioStream *audio_stream_acquire(AudioStreamType type,
-                                         uint8_t id,
-                                         const WAVEFORMATEX *fmt,
-                                         int auto_close)
-{
-    AudioStream *stream = audio_stream_find(type, id);
-    if (stream) {
-        if (!audio_stream_format_matches(stream, fmt)) {
-            audio_stream_close(stream);
-            stream = NULL;
-        }
-    }
-
-    if (!stream) {
-        stream = audio_stream_allocate();
-        if (!stream) {
-            fprintf(stderr, "[audio] no available stream slots\n");
-            return NULL;
-        }
-
-        if (audio_stream_open(stream, fmt, auto_close) != MMSYSERR_NOERROR) {
-            fprintf(stderr, "[audio] failed to open audio stream\n");
-            memset(stream, 0, sizeof(*stream));
-            return NULL;
-        }
-
-        stream->type = type;
-        stream->id = id;
-    }
-
-    return stream;
-}
-
-static bool audio_stream_queue_pcm(AudioStream *stream,
-                                   const int16_t *samples,
-                                   size_t frame_count,
-                                   float volume)
-{
-    if (!stream || !stream->handle || !samples || frame_count == 0U) {
-        return false;
-    }
-
-    const size_t channels = stream->format.nChannels ? stream->format.nChannels : 1U;
-    const size_t total_samples = frame_count * channels;
-    const size_t byte_count = total_samples * sizeof(int16_t);
-
-    AudioStreamBuffer *buffer = (AudioStreamBuffer *)calloc(1, sizeof(AudioStreamBuffer));
-    if (!buffer) {
-        return false;
-    }
-
-    buffer->data = (uint8_t *)malloc(byte_count);
-    if (!buffer->data) {
-        free(buffer);
-        return false;
-    }
-
-    int16_t *dst = (int16_t *)buffer->data;
-    float category_volume = 1.0f;
-    if (stream->type == AUDIO_STREAM_EFFECT) {
-        category_volume = g_audio.effects_volume;
-    } else if (stream->type == AUDIO_STREAM_VOICE) {
-        category_volume = g_audio.voice_volume;
-    }
-    float gain = audio_clamp(volume, 0.0f, 1.0f) *
-                 audio_clamp(category_volume, 0.0f, 1.0f) *
-                 audio_clamp(g_audio.master_volume, 0.0f, 1.0f);
+    LeaveCriticalSection(&g_voice_playback.lock);
 
     for (size_t i = 0; i < total_samples; ++i) {
-        float sample = (float)samples[i] * gain;
-        if (sample > 32767.0f) {
-            sample = 32767.0f;
-        } else if (sample < -32768.0f) {
-            sample = -32768.0f;
+        if (g_voice_playback.mix_buffer[i] > 1.0f) {
+            g_voice_playback.mix_buffer[i] = 1.0f;
+        } else if (g_voice_playback.mix_buffer[i] < -1.0f) {
+            g_voice_playback.mix_buffer[i] = -1.0f;
         }
-        dst[i] = (int16_t)sample;
     }
 
-    memset(&buffer->header, 0, sizeof(WAVEHDR));
-    buffer->header.lpData = (LPSTR)buffer->data;
-    buffer->header.dwBufferLength = (DWORD)byte_count;
-    buffer->header.dwUser = (DWORD_PTR)buffer;
-
-    if (g_audio.stream_lock_initialized) {
-        EnterCriticalSection(&g_audio.stream_lock);
-        if (!stream->head) {
-            stream->head = buffer;
-        } else {
-            stream->tail->next = buffer;
+    if (float_format) {
+        memcpy(dest, g_voice_playback.mix_buffer, total_samples * sizeof(float));
+    } else if (bytes_per_sample == 2U) {
+        int16_t *dst = (int16_t *)dest;
+        for (size_t i = 0; i < total_samples; ++i) {
+            float sample = g_voice_playback.mix_buffer[i] * 32767.0f;
+            if (sample > 32767.0f) {
+                sample = 32767.0f;
+            } else if (sample < -32768.0f) {
+                sample = -32768.0f;
+            }
+            dst[i] = (int16_t)sample;
         }
-        stream->tail = buffer;
-        ++stream->buffer_count;
-        LeaveCriticalSection(&g_audio.stream_lock);
     } else {
-        if (!stream->head) {
-            stream->head = buffer;
-        } else {
-            stream->tail->next = buffer;
+        memset(dest, 0, total_samples * bytes_per_sample);
+    }
+}
+
+static DWORD WINAPI voice_render_thread(LPVOID unused)
+{
+    (void)unused;
+    DWORD task_index = 0;
+    HANDLE mmcss = AvSetMmThreadCharacteristicsA("Pro Audio", &task_index);
+
+    g_voice_playback.running = TRUE;
+    while (g_voice_playback.running) {
+        DWORD wait = WaitForSingleObject(g_voice_playback.event, INFINITE);
+        if (wait != WAIT_OBJECT_0) {
+            continue;
         }
-        stream->tail = buffer;
-        ++stream->buffer_count;
+        if (!g_voice_playback.running) {
+            break;
+        }
+
+        UINT32 padding = 0;
+        if (FAILED(IAudioClient_GetCurrentPadding(g_voice_playback.client, &padding))) {
+            continue;
+        }
+        if (padding >= g_voice_playback.buffer_frames) {
+            continue;
+        }
+
+        UINT32 frames_to_write = g_voice_playback.buffer_frames - padding;
+        BYTE *data = NULL;
+        if (FAILED(IAudioRenderClient_GetBuffer(g_voice_playback.render, frames_to_write, &data))) {
+            continue;
+        }
+
+        voice_mix_output(data, frames_to_write);
+        IAudioRenderClient_ReleaseBuffer(g_voice_playback.render, frames_to_write, 0);
     }
 
-    MMRESULT prepare_result = waveOutPrepareHeader(stream->handle, &buffer->header, sizeof(WAVEHDR));
-    if (prepare_result != MMSYSERR_NOERROR) {
-        if (g_audio.stream_lock_initialized) {
-            EnterCriticalSection(&g_audio.stream_lock);
-            audio_stream_detach_buffer(stream, buffer);
-            LeaveCriticalSection(&g_audio.stream_lock);
-        } else {
-            audio_stream_detach_buffer(stream, buffer);
-        }
-        free(buffer->data);
-        free(buffer);
+    if (mmcss) {
+        AvRevertMmThreadCharacteristics(mmcss);
+    }
+    return 0;
+}
+
+static void voice_playback_shutdown(void)
+{
+    g_voice_playback.running = FALSE;
+    if (g_voice_playback.event) {
+        SetEvent(g_voice_playback.event);
+    }
+    if (g_voice_playback.thread) {
+        WaitForSingleObject(g_voice_playback.thread, INFINITE);
+        CloseHandle(g_voice_playback.thread);
+        g_voice_playback.thread = NULL;
+    }
+
+    voice_render_queue_clear();
+    if (g_voice_playback.lock_initialized) {
+        DeleteCriticalSection(&g_voice_playback.lock);
+        g_voice_playback.lock_initialized = 0;
+    }
+
+    SAFE_RELEASE(g_voice_playback.render);
+    SAFE_RELEASE(g_voice_playback.client);
+    SAFE_RELEASE(g_voice_playback.device);
+
+    if (g_voice_playback.event) {
+        CloseHandle(g_voice_playback.event);
+        g_voice_playback.event = NULL;
+    }
+    if (g_voice_playback.format) {
+        CoTaskMemFree(g_voice_playback.format);
+        g_voice_playback.format = NULL;
+    }
+    free(g_voice_playback.mix_buffer);
+    g_voice_playback.mix_buffer = NULL;
+}
+
+static bool voice_playback_start(uint32_t token)
+{
+    voice_playback_shutdown();
+
+    g_voice_playback.device = audio_get_endpoint(token, eRender);
+    if (!g_voice_playback.device) {
         return false;
     }
 
-    MMRESULT write_result = waveOutWrite(stream->handle, &buffer->header, sizeof(WAVEHDR));
-    if (write_result != MMSYSERR_NOERROR) {
-        waveOutUnprepareHeader(stream->handle, &buffer->header, sizeof(WAVEHDR));
-        if (g_audio.stream_lock_initialized) {
-            EnterCriticalSection(&g_audio.stream_lock);
-            audio_stream_detach_buffer(stream, buffer);
-            LeaveCriticalSection(&g_audio.stream_lock);
-        } else {
-            audio_stream_detach_buffer(stream, buffer);
+    HRESULT hr = IMMDevice_Activate(g_voice_playback.device, &IID_IAudioClient, CLSCTX_ALL, NULL, (void **)&g_voice_playback.client);
+    if (FAILED(hr)) {
+        audio_log_hresult("IMMDevice::Activate(render)", hr);
+        voice_playback_shutdown();
+        return false;
+    }
+
+    WAVEFORMATEX request = {0};
+    request.wFormatTag = WAVE_FORMAT_PCM;
+    request.nChannels = VOICE_CHANNELS;
+    request.nSamplesPerSec = VOICE_TARGET_RATE;
+    request.wBitsPerSample = 16;
+    request.nBlockAlign = (request.nChannels * request.wBitsPerSample) / 8U;
+    request.nAvgBytesPerSec = request.nSamplesPerSec * request.nBlockAlign;
+    request.cbSize = 0;
+
+    WAVEFORMATEX *closest = NULL;
+    hr = IAudioClient_IsFormatSupported(g_voice_playback.client, AUDCLNT_SHAREMODE_SHARED, &request, &closest);
+    if (hr == S_OK) {
+        g_voice_playback.format = audio_clone_format(&request);
+        if (!g_voice_playback.format) {
+            voice_playback_shutdown();
+            return false;
         }
-        free(buffer->data);
-        free(buffer);
+    } else if (hr == S_FALSE && closest != NULL) {
+        g_voice_playback.format = audio_clone_format(closest);
+        if (!g_voice_playback.format) {
+            voice_playback_shutdown();
+            CoTaskMemFree(closest);
+            return false;
+        }
+    } else {
+        hr = IAudioClient_GetMixFormat(g_voice_playback.client, &g_voice_playback.format);
+        if (FAILED(hr)) {
+            audio_log_hresult("IAudioClient::GetMixFormat(render)", hr);
+            voice_playback_shutdown();
+            return false;
+        }
+    }
+    if (closest) {
+        CoTaskMemFree(closest);
+        closest = NULL;
+    }
+
+    g_voice_playback.event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    if (!g_voice_playback.event) {
+        audio_log("Failed to create render event");
+        voice_playback_shutdown();
+        return false;
+    }
+
+    REFERENCE_TIME duration = 20 * 10000; /* 20 ms */
+    hr = IAudioClient_Initialize(g_voice_playback.client,
+                                 AUDCLNT_SHAREMODE_SHARED,
+                                 AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                 duration,
+                                 0,
+                                 g_voice_playback.format,
+                                 NULL);
+    if (FAILED(hr)) {
+        audio_log_hresult("IAudioClient::Initialize(render)", hr);
+        voice_playback_shutdown();
+        return false;
+    }
+
+    hr = IAudioClient_SetEventHandle(g_voice_playback.client, g_voice_playback.event);
+    if (FAILED(hr)) {
+        audio_log_hresult("IAudioClient::SetEventHandle", hr);
+        voice_playback_shutdown();
+        return false;
+    }
+
+    hr = IAudioClient_GetBufferSize(g_voice_playback.client, &g_voice_playback.buffer_frames);
+    if (FAILED(hr)) {
+        audio_log_hresult("IAudioClient::GetBufferSize", hr);
+        voice_playback_shutdown();
+        return false;
+    }
+
+    hr = IAudioClient_GetService(g_voice_playback.client, &IID_IAudioRenderClient, (void **)&g_voice_playback.render);
+    if (FAILED(hr)) {
+        audio_log_hresult("IAudioClient::GetService(render)", hr);
+        voice_playback_shutdown();
+        return false;
+    }
+
+    g_voice_playback.mix_buffer = (float *)calloc(g_voice_playback.buffer_frames * g_voice_playback.format->nChannels, sizeof(float));
+    if (!g_voice_playback.mix_buffer) {
+        audio_log("Failed to allocate mix buffer");
+        voice_playback_shutdown();
+        return false;
+    }
+
+    InitializeCriticalSection(&g_voice_playback.lock);
+    g_voice_playback.lock_initialized = 1;
+    g_voice_playback.head = g_voice_playback.tail = NULL;
+    g_voice_playback.running = TRUE;
+
+    g_voice_playback.thread = CreateThread(NULL, 0, voice_render_thread, NULL, 0, NULL);
+    if (!g_voice_playback.thread) {
+        audio_log("Failed to create render thread");
+        voice_playback_shutdown();
+        return false;
+    }
+
+    hr = IAudioClient_Start(g_voice_playback.client);
+    if (FAILED(hr)) {
+        audio_log_hresult("IAudioClient::Start(render)", hr);
+        voice_playback_shutdown();
         return false;
     }
 
     return true;
 }
 
-typedef struct WavInfo {
-    int16_t *samples;
-    size_t frame_count;
-    WAVEFORMATEX format;
-} WavInfo;
-
-static bool audio_load_wav(const char *path, WavInfo *out_info)
+static DWORD WINAPI voice_capture_thread(LPVOID unused)
 {
-    if (!path || !out_info) {
-        return false;
-    }
+    (void)unused;
+    DWORD task_index = 0;
+    HANDLE mmcss = AvSetMmThreadCharacteristicsA("Audio", &task_index);
 
-    FILE *fp = fopen(path, "rb");
-    if (!fp) {
-        fprintf(stderr, "[audio] failed to open wav: %s\n", path);
-        return false;
-    }
+    g_voice_capture.running = TRUE;
+    const BOOL float_format = audio_format_is_float(g_voice_capture.format);
+    const UINT32 channels = g_voice_capture.format->nChannels;
+    const UINT32 src_rate = g_voice_capture.format->nSamplesPerSec;
 
-    char riff[4];
-    if (fread(riff, 1, 4, fp) != 4 || memcmp(riff, "RIFF", 4) != 0) {
-        fclose(fp);
-        fprintf(stderr, "[audio] invalid wav (missing RIFF): %s\n", path);
-        return false;
-    }
-
-    uint32_t riff_size = 0;
-    fread(&riff_size, sizeof(uint32_t), 1, fp);
-
-    char wave[4];
-    if (fread(wave, 1, 4, fp) != 4 || memcmp(wave, "WAVE", 4) != 0) {
-        fclose(fp);
-        fprintf(stderr, "[audio] invalid wav (missing WAVE): %s\n", path);
-        return false;
-    }
-
-    WAVEFORMATEX fmt = {0};
-    int got_fmt = 0;
-    int got_data = 0;
-    int16_t *samples = NULL;
-    uint32_t data_size = 0;
-
-    while (!feof(fp)) {
-        char chunk_id[4];
-        uint32_t chunk_size = 0;
-        if (fread(chunk_id, 1, 4, fp) != 4) {
-            break;
+    while (g_voice_capture.running) {
+        DWORD wait = WaitForSingleObject(g_voice_capture.event, INFINITE);
+        if (wait != WAIT_OBJECT_0) {
+            continue;
         }
-        if (fread(&chunk_size, sizeof(uint32_t), 1, fp) != 1) {
+        if (!g_voice_capture.running) {
             break;
         }
 
-        if (memcmp(chunk_id, "fmt ", 4) == 0) {
-            if (chunk_size < sizeof(WAVEFORMATEX) - sizeof(uint16_t)) {
-                fclose(fp);
-                fprintf(stderr, "[audio] unsupported wav fmt chunk: %s\n", path);
-                return false;
-            }
-
-            uint16_t audio_format = 0;
-            uint16_t channels = 0;
-            uint32_t sample_rate = 0;
-            uint32_t byte_rate = 0;
-            uint16_t block_align = 0;
-            uint16_t bits_per_sample = 0;
-
-            fread(&audio_format, sizeof(uint16_t), 1, fp);
-            fread(&channels, sizeof(uint16_t), 1, fp);
-            fread(&sample_rate, sizeof(uint32_t), 1, fp);
-            fread(&byte_rate, sizeof(uint32_t), 1, fp);
-            fread(&block_align, sizeof(uint16_t), 1, fp);
-            fread(&bits_per_sample, sizeof(uint16_t), 1, fp);
-
-            if (chunk_size > 16) {
-                fseek(fp, chunk_size - 16, SEEK_CUR);
-            }
-
-            if (audio_format != WAVE_FORMAT_PCM || (bits_per_sample != 16)) {
-                fclose(fp);
-                fprintf(stderr, "[audio] unsupported wav format (only 16-bit PCM): %s\n", path);
-                return false;
-            }
-
-            fmt.wFormatTag = WAVE_FORMAT_PCM;
-            fmt.nChannels = channels;
-            fmt.nSamplesPerSec = sample_rate;
-            fmt.wBitsPerSample = bits_per_sample;
-            fmt.nBlockAlign = block_align;
-            fmt.nAvgBytesPerSec = byte_rate;
-            fmt.cbSize = 0;
-            got_fmt = 1;
-        } else if (memcmp(chunk_id, "data", 4) == 0) {
-            if (!got_fmt) {
-                fclose(fp);
-                fprintf(stderr, "[audio] wav missing fmt chunk before data: %s\n", path);
-                return false;
-            }
-
-            samples = (int16_t *)malloc(chunk_size);
-            if (!samples) {
-                fclose(fp);
-                fprintf(stderr, "[audio] out of memory reading wav: %s\n", path);
-                return false;
-            }
-
-            if (fread(samples, 1, chunk_size, fp) != chunk_size) {
-                free(samples);
-                fclose(fp);
-                fprintf(stderr, "[audio] truncated wav data: %s\n", path);
-                return false;
-            }
-
-            data_size = chunk_size;
-            got_data = 1;
-        } else {
-            fseek(fp, chunk_size, SEEK_CUR);
+        UINT32 packet_frames = 0;
+        HRESULT hr = IAudioCaptureClient_GetNextPacketSize(g_voice_capture.capture, &packet_frames);
+        if (FAILED(hr)) {
+            audio_log_hresult("IAudioCaptureClient::GetNextPacketSize", hr);
+            continue;
         }
 
-        if (got_fmt && got_data) {
-            break;
+        while (packet_frames > 0) {
+            BYTE *data = NULL;
+            UINT32 frames = 0;
+            DWORD flags = 0;
+            hr = IAudioCaptureClient_GetBuffer(g_voice_capture.capture, &data, &frames, &flags, NULL, NULL);
+            if (FAILED(hr)) {
+                audio_log_hresult("IAudioCaptureClient::GetBuffer", hr);
+                break;
+            }
+
+            if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data) {
+                double ratio = (double)VOICE_TARGET_RATE / (double)src_rate;
+                size_t dst_frames = (size_t)((double)frames * ratio) + 1U;
+                int16_t *converted = (int16_t *)malloc(dst_frames * sizeof(int16_t));
+                if (converted) {
+                    double src_pos = 0.0;
+                    float level_accum = 0.0f;
+                    size_t level_samples = 0U;
+
+                    for (size_t i = 0; i < dst_frames; ++i) {
+                        size_t src_index = (size_t)src_pos;
+                        if (src_index >= frames) {
+                            src_index = frames - 1U;
+                        }
+                        size_t src_next = (src_index + 1U < frames) ? (src_index + 1U) : src_index;
+                        double frac = src_pos - (double)src_index;
+
+                        const BYTE *frame0 = data + src_index * g_voice_capture.format->nBlockAlign;
+                        const BYTE *frame1 = data + src_next * g_voice_capture.format->nBlockAlign;
+
+                        float sample0 = 0.0f;
+                        float sample1 = 0.0f;
+                        if (float_format) {
+                            const float *f0 = (const float *)frame0;
+                            const float *f1 = (const float *)frame1;
+                            sample0 = f0[0];
+                            sample1 = f1[0];
+                            if (channels > 1U) {
+                                for (UINT32 ch = 1; ch < channels; ++ch) {
+                                    sample0 += f0[ch];
+                                    sample1 += f1[ch];
+                                }
+                                sample0 /= (float)channels;
+                                sample1 /= (float)channels;
+                            }
+                        } else {
+                            const int16_t *i0 = (const int16_t *)frame0;
+                            const int16_t *i1 = (const int16_t *)frame1;
+                            sample0 = (float)i0[0] / 32768.0f;
+                            sample1 = (float)i1[0] / 32768.0f;
+                            if (channels > 1U) {
+                                for (UINT32 ch = 1; ch < channels; ++ch) {
+                                    sample0 += (float)i0[ch] / 32768.0f;
+                                    sample1 += (float)i1[ch] / 32768.0f;
+                                }
+                                sample0 /= (float)channels;
+                                sample1 /= (float)channels;
+                            }
+                        }
+
+                        float sample = sample0 + (sample1 - sample0) * (float)frac;
+                        if (sample > 1.0f) {
+                            sample = 1.0f;
+                        } else if (sample < -1.0f) {
+                            sample = -1.0f;
+                        }
+                        converted[i] = (int16_t)(sample * 32767.0f);
+                        level_accum += sample * sample;
+                        ++level_samples;
+                        src_pos += 1.0 / ratio;
+                    }
+
+                    EnterCriticalSection(&g_voice_capture.lock);
+                    for (size_t i = 0; i < dst_frames; ++i) {
+                        g_voice_capture.ring[g_voice_capture.ring_write] = converted[i];
+                        g_voice_capture.ring_write = (g_voice_capture.ring_write + 1U) % g_voice_capture.ring_capacity;
+                        if (g_voice_capture.ring_write == g_voice_capture.ring_read) {
+                            g_voice_capture.ring_read = (g_voice_capture.ring_read + 1U) % g_voice_capture.ring_capacity;
+                        }
+                    }
+                    if (level_samples > 0U) {
+                        float rms = sqrtf(level_accum / (float)level_samples);
+                        g_voice_capture.level_linear = (g_voice_capture.level_linear * 0.85f) + (rms * 0.15f);
+                        g_voice_capture.level_db = (g_voice_capture.level_linear > 0.000001f)
+                                                       ? 20.0f * log10f(g_voice_capture.level_linear)
+                                                       : -120.0f;
+                    }
+                    LeaveCriticalSection(&g_voice_capture.lock);
+                    free(converted);
+                }
+            }
+
+            IAudioCaptureClient_ReleaseBuffer(g_voice_capture.capture, frames);
+            hr = IAudioCaptureClient_GetNextPacketSize(g_voice_capture.capture, &packet_frames);
+            if (FAILED(hr)) {
+                audio_log_hresult("IAudioCaptureClient::GetNextPacketSize", hr);
+                break;
+            }
         }
     }
 
-    fclose(fp);
+    if (mmcss) {
+        AvRevertMmThreadCharacteristics(mmcss);
+    }
+    return 0;
+}
 
-    if (!got_fmt || !got_data || data_size == 0U) {
-        if (samples) {
-            free(samples);
-        }
-        fprintf(stderr, "[audio] incomplete wav file: %s\n", path);
+static void voice_capture_shutdown(void)
+{
+    g_voice_capture.running = FALSE;
+    if (g_voice_capture.event) {
+        SetEvent(g_voice_capture.event);
+    }
+    if (g_voice_capture.thread) {
+        WaitForSingleObject(g_voice_capture.thread, INFINITE);
+        CloseHandle(g_voice_capture.thread);
+        g_voice_capture.thread = NULL;
+    }
+
+    if (g_voice_capture.lock_initialized) {
+    if (g_voice_capture.lock_initialized) {
+        DeleteCriticalSection(&g_voice_capture.lock);
+        g_voice_capture.lock_initialized = 0;
+    }
+        g_voice_capture.lock_initialized = 0;
+    }
+
+    SAFE_RELEASE(g_voice_capture.capture);
+    SAFE_RELEASE(g_voice_capture.client);
+    SAFE_RELEASE(g_voice_capture.device);
+
+    if (g_voice_capture.event) {
+        CloseHandle(g_voice_capture.event);
+        g_voice_capture.event = NULL;
+    }
+    if (g_voice_capture.format) {
+        CoTaskMemFree(g_voice_capture.format);
+        g_voice_capture.format = NULL;
+    }
+
+    free(g_voice_capture.ring);
+    g_voice_capture.ring = NULL;
+    g_voice_capture.ring_capacity = 0;
+    g_voice_capture.ring_read = 0;
+    g_voice_capture.ring_write = 0;
+    g_voice_capture.level_linear = 0.0f;
+    g_voice_capture.level_db = -120.0f;
+}
+
+static bool voice_capture_start(uint32_t token)
+{
+    voice_capture_shutdown();
+
+    g_voice_capture.device = audio_get_endpoint(token, eCapture);
+    if (!g_voice_capture.device) {
         return false;
     }
 
-    size_t frame_count = data_size / fmt.nBlockAlign;
+    HRESULT hr = IMMDevice_Activate(g_voice_capture.device, &IID_IAudioClient, CLSCTX_ALL, NULL, (void **)&g_voice_capture.client);
+    if (FAILED(hr)) {
+        audio_log_hresult("IMMDevice::Activate(capture)", hr);
+        voice_capture_shutdown();
+        return false;
+    }
 
-    out_info->samples = samples;
-    out_info->frame_count = frame_count;
-    out_info->format = fmt;
+    WAVEFORMATEX request = {0};
+    request.wFormatTag = WAVE_FORMAT_PCM;
+    request.nChannels = VOICE_CHANNELS;
+    request.nSamplesPerSec = VOICE_TARGET_RATE;
+    request.wBitsPerSample = 16;
+    request.nBlockAlign = (request.nChannels * request.wBitsPerSample) / 8U;
+    request.nAvgBytesPerSec = request.nSamplesPerSec * request.nBlockAlign;
+    request.cbSize = 0;
+
+    WAVEFORMATEX *closest = NULL;
+    hr = IAudioClient_IsFormatSupported(g_voice_capture.client, AUDCLNT_SHAREMODE_SHARED, &request, &closest);
+    if (hr == S_OK) {
+        g_voice_capture.format = audio_clone_format(&request);
+        if (!g_voice_capture.format) {
+            voice_capture_shutdown();
+            return false;
+        }
+    } else if (hr == S_FALSE && closest != NULL) {
+        g_voice_capture.format = audio_clone_format(closest);
+        if (!g_voice_capture.format) {
+            voice_capture_shutdown();
+            CoTaskMemFree(closest);
+            return false;
+        }
+    } else {
+        hr = IAudioClient_GetMixFormat(g_voice_capture.client, &g_voice_capture.format);
+        if (FAILED(hr)) {
+            audio_log_hresult("IAudioClient::GetMixFormat(capture)", hr);
+            voice_capture_shutdown();
+            return false;
+        }
+    }
+    if (closest) {
+        CoTaskMemFree(closest);
+        closest = NULL;
+    }
+
+    g_voice_capture.event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    if (!g_voice_capture.event) {
+        audio_log("Failed to create capture event");
+        voice_capture_shutdown();
+        return false;
+    }
+
+    REFERENCE_TIME duration = 20 * 10000;
+    hr = IAudioClient_Initialize(g_voice_capture.client,
+                                 AUDCLNT_SHAREMODE_SHARED,
+                                 AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                 duration,
+                                 0,
+                                 g_voice_capture.format,
+                                 NULL);
+    if (FAILED(hr)) {
+        audio_log_hresult("IAudioClient::Initialize(capture)", hr);
+        voice_capture_shutdown();
+        return false;
+    }
+
+    hr = IAudioClient_SetEventHandle(g_voice_capture.client, g_voice_capture.event);
+    if (FAILED(hr)) {
+        audio_log_hresult("IAudioClient::SetEventHandle(capture)", hr);
+        voice_capture_shutdown();
+        return false;
+    }
+
+    hr = IAudioClient_GetService(g_voice_capture.client, &IID_IAudioCaptureClient, (void **)&g_voice_capture.capture);
+    if (FAILED(hr)) {
+        audio_log_hresult("IAudioClient::GetService(capture)", hr);
+        voice_capture_shutdown();
+        return false;
+    }
+
+    g_voice_capture.ring_capacity = VOICE_RING_FRAMES;
+    g_voice_capture.ring = (int16_t *)calloc(g_voice_capture.ring_capacity, sizeof(int16_t));
+    if (!g_voice_capture.ring) {
+        voice_capture_shutdown();
+        return false;
+    }
+
+    InitializeCriticalSection(&g_voice_capture.lock);
+    g_voice_capture.lock_initialized = 1;
+    g_voice_capture.ring_read = g_voice_capture.ring_write = 0;
+    g_voice_capture.level_linear = 0.0f;
+    g_voice_capture.level_db = -120.0f;
+
+    g_voice_capture.running = TRUE;
+    g_voice_capture.thread = CreateThread(NULL, 0, voice_capture_thread, NULL, 0, NULL);
+    if (!g_voice_capture.thread) {
+        voice_capture_shutdown();
+        return false;
+    }
+
+    hr = IAudioClient_Start(g_voice_capture.client);
+    if (FAILED(hr)) {
+        audio_log_hresult("IAudioClient::Start(capture)", hr);
+        voice_capture_shutdown();
+        return false;
+    }
+
     return true;
 }
 
 #endif /* defined(_WIN32) */
 
-static void audio_music_apply_volume(void)
-{
-#if defined(_WIN32)
-    if (!g_audio.music_playing) {
-        return;
-    }
-
-    float gain = audio_clamp(g_audio.music_volume, 0.0f, 1.0f) * audio_clamp(g_audio.master_volume, 0.0f, 1.0f);
-    unsigned int level = (unsigned int)(gain * 1000.0f);
-    if (level > 1000U) {
-        level = 1000U;
-    }
-
-    char command[128];
-    snprintf(command, sizeof(command), "setaudio " AUDIO_ALIAS_MUSIC " volume to %u", level);
-    audio_mci_command(command, "set volume");
-#endif
-}
+/* Public API */
 
 bool audio_init(void)
 {
-    memset(&g_audio, 0, sizeof(g_audio));
-    g_audio.initialized = 1;
+    if (g_audio.initialized) {
+        return true;
+    }
+
+#if defined(_WIN32)
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (FAILED(hr)) {
+        audio_log_hresult("CoInitializeEx", hr);
+        return false;
+    }
+
+    hr = CoCreateInstance(&CLSID_MMDeviceEnumerator,
+                          NULL,
+                          CLSCTX_ALL,
+                          &IID_IMMDeviceEnumerator,
+                          (void **)&g_audio.device_enumerator);
+    if (FAILED(hr)) {
+        audio_log_hresult("CoCreateInstance(MMDeviceEnumerator)", hr);
+        CoUninitialize();
+        return false;
+    }
+
+    if (!voice_playback_start(g_audio.output_device_token)) {
+        audio_log("Voice playback initialization failed");
+    }
+    if (!voice_capture_start(g_audio.input_device_token)) {
+        audio_log("Microphone capture initialization failed");
+    }
+#endif
+
     g_audio.master_volume = 1.0f;
     g_audio.music_volume = 1.0f;
     g_audio.effects_volume = 1.0f;
     g_audio.voice_volume = 1.0f;
     g_audio.microphone_volume = 1.0f;
-    g_audio.output_device_id = UINT32_MAX;
-    g_audio.input_device_id = UINT32_MAX;
-    g_audio.next_effect_id = 1;
-
-#if defined(_WIN32)
-    InitializeCriticalSection(&g_audio.stream_lock);
-    g_audio.stream_lock_initialized = 1;
-#endif
-
+    g_audio.music_configured = 0;
+    g_audio.music_playing = 0;
+    g_audio.music_loop = 0;
+    g_audio.music_track[0] = '\0';
+    g_audio.initialized = 1;
     return true;
 }
 
 void audio_shutdown(void)
 {
-    if (!g_audio.initialized) {
-        return;
-    }
-
     audio_music_stop();
-    audio_voice_stop_all();
-
 #if defined(_WIN32)
-    for (size_t i = 0; i < AUDIO_MAX_STREAMS; ++i) {
-        AudioStream *stream = &g_audio.streams[i];
-        if (stream->handle) {
-            audio_stream_close(stream);
-        }
-    }
-
-    if (g_audio.stream_lock_initialized) {
-        DeleteCriticalSection(&g_audio.stream_lock);
-        g_audio.stream_lock_initialized = 0;
-    }
+    voice_playback_shutdown();
+    voice_capture_shutdown();
+    SAFE_RELEASE(g_audio.device_enumerator);
+    CoUninitialize();
+    memset(&g_voice_playback, 0, sizeof(g_voice_playback));
+    memset(&g_voice_capture, 0, sizeof(g_voice_capture));
 #endif
 
     memset(&g_audio, 0, sizeof(g_audio));
@@ -655,7 +1157,6 @@ void audio_shutdown(void)
 void audio_set_master_volume(float volume)
 {
     g_audio.master_volume = audio_clamp(volume, 0.0f, 1.0f);
-    audio_music_apply_volume();
 }
 
 float audio_master_volume(void)
@@ -665,14 +1166,15 @@ float audio_master_volume(void)
 
 bool audio_music_set_track(const char *path)
 {
-    if (!g_audio.initialized || !path || !path[0]) {
+#if defined(_WIN32)
+    if (!path || !path[0]) {
         return false;
     }
 
-#if defined(_WIN32)
     char full_path[AUDIO_MAX_PATH] = {0};
     if (!_fullpath(full_path, path, sizeof(full_path))) {
-        audio_copy_string(full_path, sizeof(full_path), path);
+        strncpy(full_path, path, sizeof(full_path) - 1U);
+        full_path[sizeof(full_path) - 1U] = '\0';
     }
 
     if (_access(full_path, 0) != 0) {
@@ -682,7 +1184,8 @@ bool audio_music_set_track(const char *path)
         return false;
     }
 
-    audio_copy_string(g_audio.music_track, sizeof(g_audio.music_track), full_path);
+    strncpy(g_audio.music_track, full_path, sizeof(g_audio.music_track) - 1U);
+    g_audio.music_track[sizeof(g_audio.music_track) - 1U] = '\0';
     g_audio.music_configured = 1;
     return true;
 #else
@@ -693,26 +1196,23 @@ bool audio_music_set_track(const char *path)
 
 bool audio_music_play(float volume, bool loop)
 {
-    if (!g_audio.initialized || !g_audio.music_configured) {
+#if defined(_WIN32)
+    if (!g_audio.music_configured) {
         return false;
     }
 
-    g_audio.music_volume = audio_clamp(volume, 0.0f, 1.0f);
-    g_audio.music_loop = loop ? 1 : 0;
-
-#if defined(_WIN32)
-    if (g_audio.music_playing) {
-        audio_music_stop();
-    }
+    audio_music_stop();
 
     char command[1024];
     snprintf(command, sizeof(command), "open \"%s\" alias " AUDIO_ALIAS_MUSIC, g_audio.music_track);
     if (!audio_mci_command(command, "open music")) {
-        g_audio.music_playing = 0;
         return false;
     }
 
-    audio_music_apply_volume();
+    g_audio.music_loop = loop ? 1 : 0;
+    g_audio.music_volume = audio_clamp(volume, 0.0f, 1.0f);
+    g_audio.music_playing = 1;
+    audio_music_set_volume(g_audio.music_volume);
 
     snprintf(command,
              sizeof(command),
@@ -722,10 +1222,10 @@ bool audio_music_play(float volume, bool loop)
         g_audio.music_playing = 0;
         return false;
     }
-
-    g_audio.music_playing = 1;
     return true;
 #else
+    (void)volume;
+    (void)loop;
     return false;
 #endif
 }
@@ -738,7 +1238,6 @@ void audio_music_stop(void)
         audio_mci_command("close " AUDIO_ALIAS_MUSIC, "close music");
     }
 #endif
-
     g_audio.music_playing = 0;
 }
 
@@ -750,7 +1249,20 @@ bool audio_music_is_playing(void)
 void audio_music_set_volume(float volume)
 {
     g_audio.music_volume = audio_clamp(volume, 0.0f, 1.0f);
-    audio_music_apply_volume();
+#if defined(_WIN32)
+    if (g_audio.music_playing) {
+        float scaled = g_audio.music_volume * audio_clamp(g_audio.master_volume, 0.0f, 1.0f);
+        unsigned int level = (unsigned int)(scaled * 1000.0f);
+        if (level > 1000U) {
+            level = 1000U;
+        }
+        char command[128];
+        snprintf(command, sizeof(command), "setaudio " AUDIO_ALIAS_MUSIC " volume to %u", level);
+        audio_mci_command(command, "set volume");
+    }
+#else
+    (void)volume;
+#endif
 }
 
 float audio_music_volume(void)
@@ -766,6 +1278,13 @@ void audio_set_effects_volume(float volume)
 float audio_effects_volume(void)
 {
     return g_audio.effects_volume;
+}
+
+bool audio_effect_play_file(const char *path, float volume)
+{
+    (void)path;
+    (void)volume;
+    return false;
 }
 
 void audio_set_voice_volume(float volume)
@@ -788,73 +1307,29 @@ float audio_microphone_volume(void)
     return g_audio.microphone_volume;
 }
 
-bool audio_effect_play_file(const char *path, float volume)
-{
-    if (!g_audio.initialized || !path || !path[0]) {
-        return false;
-    }
-
-    float gain = audio_clamp(volume, 0.0f, 1.0f);
-    if (gain <= 0.0f) {
-        return true;
-    }
-
-#if defined(_WIN32)
-    WavInfo info = {0};
-    if (!audio_load_wav(path, &info)) {
-        return false;
-    }
-
-    uint8_t stream_id = g_audio.next_effect_id++;
-    if (g_audio.next_effect_id == 0U) {
-        g_audio.next_effect_id = 1U;
-    }
-
-    AudioStream *stream = audio_stream_acquire(AUDIO_STREAM_EFFECT, stream_id, &info.format, 1);
-    if (!stream) {
-        free(info.samples);
-        return false;
-    }
-
-    bool queued = audio_stream_queue_pcm(stream, info.samples, info.frame_count, gain);
-    free(info.samples);
-    return queued;
-#else
-    (void)path;
-    (void)gain;
-    return false;
-#endif
-}
-
 bool audio_voice_submit(uint8_t speaker_id, const AudioVoiceFrame *frame)
 {
-    if (!g_audio.initialized || !frame || !frame->samples || frame->sample_count == 0U) {
-        return false;
-    }
-
-    float gain = audio_clamp(frame->volume, 0.0f, 1.0f);
-    if (gain <= 0.0f) {
-        return true;
-    }
-
-#if defined(_WIN32)
-    WAVEFORMATEX fmt = {0};
-    fmt.wFormatTag = WAVE_FORMAT_PCM;
-    fmt.nChannels = frame->channels > 0U ? frame->channels : 1U;
-    fmt.nSamplesPerSec = frame->sample_rate > 0U ? frame->sample_rate : 16000U;
-    fmt.wBitsPerSample = 16;
-    fmt.nBlockAlign = fmt.nChannels * (fmt.wBitsPerSample / 8);
-    fmt.nAvgBytesPerSec = fmt.nSamplesPerSec * fmt.nBlockAlign;
-    fmt.cbSize = 0;
-
-    AudioStream *stream = audio_stream_acquire(AUDIO_STREAM_VOICE, speaker_id, &fmt, 0);
-    if (!stream) {
-        return false;
-    }
-
-    return audio_stream_queue_pcm(stream, frame->samples, frame->sample_count, gain);
-#else
     (void)speaker_id;
+#if defined(_WIN32)
+    if (!frame || !frame->samples || frame->sample_count == 0U) {
+        return false;
+    }
+    if (!g_voice_playback.client || !g_voice_playback.format) {
+        return false;
+    }
+
+    VoiceRenderBuffer *buffer = voice_create_buffer(frame, g_voice_playback.format);
+    if (!buffer) {
+        return false;
+    }
+    if (!g_voice_playback.lock_initialized) {
+        free(buffer->samples);
+        free(buffer);
+        return false;
+    }
+    voice_render_queue_push(buffer);
+    return true;
+#else
     (void)frame;
     return false;
 #endif
@@ -862,38 +1337,97 @@ bool audio_voice_submit(uint8_t speaker_id, const AudioVoiceFrame *frame)
 
 void audio_voice_stop(uint8_t speaker_id)
 {
-#if defined(_WIN32)
-    AudioStream *stream = audio_stream_find(AUDIO_STREAM_VOICE, speaker_id);
-    if (stream) {
-        audio_stream_close(stream);
-    }
-#else
     (void)speaker_id;
-#endif
+    audio_voice_stop_all();
 }
 
 void audio_voice_stop_all(void)
 {
 #if defined(_WIN32)
-    for (size_t i = 0; i < AUDIO_MAX_STREAMS; ++i) {
-        AudioStream *stream = &g_audio.streams[i];
-        if (stream->active && stream->type == AUDIO_STREAM_VOICE) {
-            audio_stream_close(stream);
-        }
+    voice_render_queue_clear();
+#endif
+}
+
+bool audio_microphone_start(void)
+{
+#if defined(_WIN32)
+    return voice_capture_start(g_audio.input_device_token);
+#else
+    return false;
+#endif
+}
+
+void audio_microphone_stop(void)
+{
+#if defined(_WIN32)
+    voice_capture_shutdown();
+#endif
+}
+
+bool audio_microphone_active(void)
+{
+#if defined(_WIN32)
+    return g_voice_capture.running != 0;
+#else
+    return false;
+#endif
+}
+
+size_t audio_microphone_read(int16_t *out_samples, size_t max_samples)
+{
+    if (!out_samples || max_samples == 0U) {
+        return 0U;
     }
+#if defined(_WIN32)
+    if (!g_voice_capture.lock_initialized) {
+        return 0U;
+    }
+    size_t copied = 0U;
+    EnterCriticalSection(&g_voice_capture.lock);
+    while (copied < max_samples && g_voice_capture.ring_read != g_voice_capture.ring_write) {
+        out_samples[copied++] = g_voice_capture.ring[g_voice_capture.ring_read];
+        g_voice_capture.ring_read = (g_voice_capture.ring_read + 1U) % g_voice_capture.ring_capacity;
+    }
+    LeaveCriticalSection(&g_voice_capture.lock);
+    return copied;
+#else
+    return 0U;
+#endif
+}
+
+uint32_t audio_microphone_sample_rate(void)
+{
+    return VOICE_TARGET_RATE;
+}
+
+uint8_t audio_microphone_channels(void)
+{
+    return VOICE_CHANNELS;
+}
+
+float audio_microphone_level(void)
+{
+#if defined(_WIN32)
+    return g_voice_capture.level_linear;
+#else
+    return 0.0f;
+#endif
+}
+
+float audio_microphone_level_db(void)
+{
+#if defined(_WIN32)
+    return g_voice_capture.level_db;
+#else
+    return -120.0f;
 #endif
 }
 
 bool audio_select_output_device(uint32_t device_id)
 {
-    g_audio.output_device_id = device_id;
+    g_audio.output_device_token = device_id;
 #if defined(_WIN32)
-    if (!g_audio.initialized) {
-        return true;
-    }
-    audio_close_all_streams();
-    g_audio.next_effect_id = 1;
-    return true;
+    return voice_playback_start(device_id);
 #else
     return false;
 #endif
@@ -901,39 +1435,13 @@ bool audio_select_output_device(uint32_t device_id)
 
 uint32_t audio_current_output_device(void)
 {
-    return g_audio.output_device_id;
+    return g_audio.output_device_token;
 }
 
 size_t audio_enumerate_output_devices(AudioDeviceInfo *out_devices, size_t max_devices)
 {
 #if defined(_WIN32)
-    size_t count = 0;
-    UINT device_count = waveOutGetNumDevs();
-    if (!out_devices || max_devices == 0U) {
-        return (size_t)device_count + 1U;
-    }
-
-    size_t index = 0;
-    AudioDeviceInfo *info = &out_devices[index++];
-    info->id = UINT32_MAX;
-    info->is_default = true;
-    info->is_input = false;
-    snprintf(info->name, sizeof(info->name), "System Default Output");
-
-    for (UINT i = 0; i < device_count && index < max_devices; ++i) {
-        WAVEOUTCAPSA caps;
-        MMRESULT result = waveOutGetDevCapsA(i, &caps, sizeof(caps));
-        if (result != MMSYSERR_NOERROR) {
-            continue;
-        }
-        info = &out_devices[index++];
-        info->id = i;
-        info->is_default = false;
-        info->is_input = false;
-        audio_copy_string(info->name, sizeof(info->name), caps.szPname);
-    }
-    count = index;
-    return count;
+    return audio_enumerate_wasapi_devices(eRender, out_devices, max_devices);
 #else
     (void)out_devices;
     (void)max_devices;
@@ -943,9 +1451,9 @@ size_t audio_enumerate_output_devices(AudioDeviceInfo *out_devices, size_t max_d
 
 bool audio_select_input_device(uint32_t device_id)
 {
-    g_audio.input_device_id = device_id;
+    g_audio.input_device_token = device_id;
 #if defined(_WIN32)
-    return true;
+    return voice_capture_start(device_id);
 #else
     return false;
 #endif
@@ -953,39 +1461,13 @@ bool audio_select_input_device(uint32_t device_id)
 
 uint32_t audio_current_input_device(void)
 {
-    return g_audio.input_device_id;
+    return g_audio.input_device_token;
 }
 
 size_t audio_enumerate_input_devices(AudioDeviceInfo *out_devices, size_t max_devices)
 {
 #if defined(_WIN32)
-    size_t count = 0;
-    UINT device_count = waveInGetNumDevs();
-    if (!out_devices || max_devices == 0U) {
-        return (size_t)device_count + 1U;
-    }
-
-    size_t index = 0;
-    AudioDeviceInfo *info = &out_devices[index++];
-    info->id = UINT32_MAX;
-    info->is_default = true;
-    info->is_input = true;
-    snprintf(info->name, sizeof(info->name), "System Default Input");
-
-    for (UINT i = 0; i < device_count && index < max_devices; ++i) {
-        WAVEINCAPSA caps;
-        MMRESULT result = waveInGetDevCapsA(i, &caps, sizeof(caps));
-        if (result != MMSYSERR_NOERROR) {
-            continue;
-        }
-        info = &out_devices[index++];
-        info->id = i;
-        info->is_default = false;
-        info->is_input = true;
-        audio_copy_string(info->name, sizeof(info->name), caps.szPname);
-    }
-    count = index;
-    return count;
+    return audio_enumerate_wasapi_devices(eCapture, out_devices, max_devices);
 #else
     (void)out_devices;
     (void)max_devices;

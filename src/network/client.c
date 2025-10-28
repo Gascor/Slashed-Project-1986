@@ -605,9 +605,10 @@ bool network_client_send_voice_packet(NetworkClient *client, const NetworkVoiceP
     payload[7] = (enet_uint8)(gain * 255.0f);
 
     memcpy(payload + 8, packet->data, packet->data_size);
-    size_t packet_size = 1 + 8 + packet->data_size;
+    size_t packet_size = 1 + 7 + packet->data_size;
 
-    ENetPacket *enet_packet = enet_packet_create(payload, packet_size, 0);
+    ENetPacket *enet_packet =
+        enet_packet_create(payload, packet_size, ENET_PACKET_FLAG_UNSEQUENCED | ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
     if (!enet_packet) {
         return false;
     }

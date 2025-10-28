@@ -119,5 +119,6 @@ void settings_menu_cancel_rebind(SettingsMenuState *state);
 SettingsMenuResult settings_menu_render(SettingsMenuState *state,
                                         const SettingsMenuContext *context,
                                         Renderer *renderer,
-                                        const InputState *input);
+                                        const InputState *input,
+                                        double time_seconds);
 

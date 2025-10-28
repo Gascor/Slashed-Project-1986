@@ -861,9 +861,10 @@ void network_server_update(NetworkServer *server, float dt)
                                 buffer[8] = volume_byte;
                                 memcpy(buffer + 9, payload + 8, voice_bytes);
 
-                                ENetPacket *voice_packet = enet_packet_create(buffer,
-                                                                              9 + voice_bytes,
-                                                                              0);
+                                ENetPacket *voice_packet =
+                                    enet_packet_create(buffer,
+                                                       9 + voice_bytes,
+                                                       ENET_PACKET_FLAG_UNSEQUENCED | ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
                                 if (voice_packet) {
                                     enet_peer_send(target->peer, 0, voice_packet);
                                 }

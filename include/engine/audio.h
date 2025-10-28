@@ -44,6 +44,15 @@ bool audio_voice_submit(uint8_t speaker_id, const AudioVoiceFrame *frame);
 void audio_voice_stop(uint8_t speaker_id);
 void audio_voice_stop_all(void);
 
+bool audio_microphone_start(void);
+void audio_microphone_stop(void);
+bool audio_microphone_active(void);
+size_t audio_microphone_read(int16_t *out_samples, size_t max_samples);
+uint32_t audio_microphone_sample_rate(void);
+uint8_t audio_microphone_channels(void);
+float audio_microphone_level(void);
+float audio_microphone_level_db(void);
+
 bool audio_select_output_device(uint32_t device_id);
 uint32_t audio_current_output_device(void);
 size_t audio_enumerate_output_devices(AudioDeviceInfo *out_devices, size_t max_devices);
